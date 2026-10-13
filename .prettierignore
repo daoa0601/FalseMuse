@@ -1,0 +1,7 @@
+data
+.cloudflare
+.sandbox-build
+.wrangler
+pnpm-lock.yaml
+optchat_memory
+tests/*.py

@@ -1,0 +1,13 @@
+{
+  "extends": "@agentic-orch/ts-quality/tsconfig/node.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noPropertyAccessFromIndexSignature": true
+  },
+  "include": ["node/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts"]
+}

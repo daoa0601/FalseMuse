@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": [],
+    "lib": ["ES2023"],
+    "module": "Preserve",
+    "moduleResolution": "Bundler"
+  },
+  "include": [
+    "src/**/*.ts",
+    ".cloudflare/types/index.d.ts",
+    "cloudflare.config.ts",
+    "wrangler.config.ts"
+  ]
+}

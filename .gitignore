@@ -1,0 +1,10 @@
+data/
+__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+node_modules/
+.wrangler/
+.cloudflare/
+.sandbox-build/

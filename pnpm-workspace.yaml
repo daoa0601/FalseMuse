@@ -1,0 +1,25 @@
+# ts-quality is a link: dependency, not a workspace package: cf 1.0.0-beta.12 never finishes
+# `cf build` when a workspace package lies outside this directory.
+packages:
+  - "."
+
+auditLevel: high
+blockExoticSubdeps: true
+engineStrict: true
+minimumReleaseAge: 1440
+minimumReleaseAgeIgnoreMissingTime: false
+minimumReleaseAgeStrict: true
+nodeVersion: 22.22.2
+pmOnFail: error
+savePrefix: ""
+strictDepBuilds: true
+strictPeerDependencies: true
+verifyDepsBeforeRun: error
+
+allowBuilds:
+  "@agentic-orch/ts-quality": true
+  esbuild: true
+  workerd: true
+  sharp: false
+  "@google/genai": false
+  protobufjs: false

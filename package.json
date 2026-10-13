@@ -1,0 +1,46 @@
+{
+  "name": "@agentic-orch/optchat-memory",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.13.1",
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0",
+    "pnpm": "11.13.1"
+  },
+  "scripts": {
+    "build": "cf build",
+    "chat": "node scripts/chat.ts",
+    "check": "pnpm quality:quick && pnpm test",
+    "deploy": "cf deploy",
+    "dev": "cf dev",
+    "format": "prettier --write . --ignore-unknown",
+    "format:check": "prettier --check . --ignore-unknown",
+    "hooks:install": "ts-quality hooks",
+    "lint": "oxlint src node scripts tests --deny-warnings",
+    "preinstall": "node scripts/quality/require-pnpm.mjs",
+    "prototype": "node scripts/prototype.ts",
+    "quality:quick": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm secrets:scan",
+    "quality:offline": "pnpm quality:quick && pnpm test && pnpm test:python",
+    "secrets:scan": "ts-quality secrets",
+    "test": "cf build && node --test tests/*.test.ts",
+    "typecheck": "cf workers types --quiet && tsc -p tsconfig.json && tsc -p tsconfig.worker.json",
+    "types:worker": "cf workers types",
+    "test:python": "python3 -m unittest discover -s tests"
+  },
+  "dependencies": {
+    "@cloudflare/codemode": "0.5.3",
+    "@cloudflare/sandbox": "1.0.0"
+  },
+  "devDependencies": {
+    "@agentic-orch/ts-quality": "link:../ts-quality",
+    "@cloudflare/config": "0.23.0",
+    "@earendil-works/pi-coding-agent": "1.0.2",
+    "@types/node": "22.20.1",
+    "cf": "1.0.0-beta.12",
+    "miniflare": "5.20261001.0-alpha",
+    "oxlint": "1.74.0",
+    "prettier": "3.9.5",
+    "typescript": "6.0.3",
+    "wrangler": "4.147.0"
+  }
+}

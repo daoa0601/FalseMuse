@@ -1,0 +1,6 @@
+#!/bin/sh
+# OptChat for T3 Code: Settings > Providers > ACP, source "Local command", executable this file.
+# T3 Code starts it with no arguments; it reads data/ from the repository root.
+cd "$(dirname "$0")/.." || exit 1
+export PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"
+exec node scripts/acp.ts
