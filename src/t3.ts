@@ -18,15 +18,21 @@ const TERMINAL = new Set([
 ]);
 const REPORT_CHARS = 4_000;
 /** OptChat's own provider in T3 Code (bin/optchat-acp), as the owner's settings.json names it. */
-const OPTCHAT_MODEL = { instanceId: "optchat", model: "default" };
+const OPTCHAT_MODEL: ModelSelection = { instanceId: "optchat", model: "default" };
 /** Tries to post a turn, a minute apart and doubling, before it is left unsent. */
 const POST_ATTEMPTS = 5;
 
 /** The computer's sign-in is missing, expired or refused: only the owner can renew it. */
-class SignInNeeded extends Error {
+export class SignInNeeded extends Error {
   constructor(name: string) {
     super(`${name} needs the owner to sign in again`);
   }
+}
+
+/** A T3 Code provider instance and one of its models, as `t3_thread_launch` takes them. */
+export interface ModelSelection {
+  instanceId: string;
+  model: string;
 }
 
 interface Computer {
@@ -329,9 +335,16 @@ export class Computers {
   /**
    * Start a thread in a project; it runs within the access the owner approved, never above.
    * `request` is the tool call's id: a resumed turn gets the first result instead of a second
-   * thread.
+   * thread. Without a model, the thread uses the project's default in T3 Code.
    */
-  async launch(name: string, project: unknown, title: string, task: string, request: string) {
+  async launch(
+    name: string,
+    project: unknown,
+    title: string,
+    task: string,
+    request: string,
+    modelSelection?: ModelSelection,
+  ) {
     const [earlier] = this.database.rows<{ result: string | null }>(
       "SELECT result FROM t3_launches WHERE id=?",
       request,
@@ -346,7 +359,12 @@ export class Computers {
     this.database.exec("INSERT INTO t3_launches VALUES (?, NULL)", request);
     let result: unknown;
     try {
-      result = await this.call(name, "t3_thread_launch", { projectId, title, message: task });
+      result = await this.call(name, "t3_thread_launch", {
+        projectId,
+        title,
+        message: task,
+        ...(modelSelection ? { modelSelection } : {}),
+      });
     } catch (error) {
       this.database.exec("DELETE FROM t3_launches WHERE id=?", request);
       throw error;

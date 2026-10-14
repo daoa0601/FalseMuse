@@ -38,6 +38,7 @@ import { UsageLedger, allowsCompaction } from "./usage.ts";
 import { TranscriptUploads, transcriptKey } from "./uploads.ts";
 import { ModelRelay } from "./relay.ts";
 import { Computers } from "./t3.ts";
+import { Helpers } from "./helpers.ts";
 import { UPLOAD_PART_BYTES, parseNodeMessage } from "./protocol.ts";
 import { isOwner, isOwnerKey, sessionCookie, sessionToken } from "./owner.ts";
 import {
@@ -195,6 +196,7 @@ export class Master extends DurableObject<Env> {
   private readonly uploads: TranscriptUploads;
   private readonly relay: ModelRelay;
   private readonly computers: Computers;
+  private readonly helpers: Helpers;
   private readonly routes: [string, RegExp, Route][];
   private working: Promise<void> | null = null;
   private refreshing: Promise<OAuthCredential> | null = null;
@@ -245,6 +247,7 @@ export class Master extends DurableObject<Env> {
     this.uploads = new TranscriptUploads(database, env.TRANSCRIPTS);
     this.relay = new ModelRelay(ctx, (machine) => this.nodes.servesModels(machine));
     this.computers = new Computers(database);
+    this.helpers = new Helpers(database, this.computers);
     database.exec(
       "CREATE TABLE IF NOT EXISTS code_steps (call_id TEXT, step INTEGER, result TEXT, PRIMARY KEY(call_id, step))",
     );
@@ -316,6 +319,7 @@ export class Master extends DurableObject<Env> {
       ["GET", /^\/api\/nodes$/, () => json(this.nodes.list())],
       ["GET", /^\/api\/computers$/, () => json(this.computers.list())],
       ["GET", /^\/api\/posts$/, () => json(this.computers.posts())],
+      ["GET", /^\/api\/helpers$/, () => json(this.helpers.list())],
       [
         "POST",
         /^\/api\/computers$/,
@@ -1140,6 +1144,18 @@ export class Master extends DurableObject<Env> {
           requireString(args["thread"], "interrupt needs a thread"),
           callId,
         );
+      case "helpers":
+        return this.helpers.list();
+      case "hire":
+        return this.helpers.hire(args);
+      case "delegate":
+        return this.helpers.delegate(
+          args["helper"],
+          requireString(args["task"], "delegate needs a task"),
+          callId,
+        );
+      case "retire":
+        return this.helpers.retire(args["name"]);
       case "spawn":
         return this.nodes.propose(args, this.memory.render(), callId);
       case "tell":

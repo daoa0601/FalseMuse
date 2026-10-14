@@ -154,6 +154,16 @@ thread. Deleting the inbox makes the next post start a new one. A reply of only 
 posted. Images attached to a message are stored in R2 under `images/` and seen with it; the Master's
 `look` tool shows one again later.
 
+## Helpers
+
+Ask OptChat to hire a named helper, for example "hire a reviewer on my laptop in optchat-memory,
+using codex gpt-6.1-sol, that reviews diffs for bugs". A helper has standing instructions, a model
+(a T3 Code provider instance and model, or the project's default), and one T3 Code thread titled
+`Helper: <name>` that keeps its context between jobs. Jobs you give it through OptChat queue in that
+thread and report back like any thread the Master starts; open the thread to talk to the helper
+directly. OptChat gives helpers jobs only when you ask, unless you hired one with `auto`.
+`GET /api/helpers` lists them.
+
 ## Live ingest
 
 After the history import, set `ingest: {"baseline": "data/phase1-2026-10-05"}` in the node
