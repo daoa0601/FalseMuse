@@ -962,6 +962,12 @@ function fakeT3() {
           projects: [{ id: "p1", title: "optchat", workspaceRoot: "/work/optchat", scripts: [] }],
           nextCursor: null,
         };
+      case "orchestrator_capabilities":
+        return {
+          providers: [
+            { providerInstanceId: "codex", displayName: "Codex", models: [{ id: "gpt-6.1-sol" }] },
+          ],
+        };
       case "t3_thread_launch":
         return { threadId: `th${++launches}`, projectId: "p1", runId: "r1", status: "starting" };
       case "t3_thread_read":
@@ -1212,6 +1218,9 @@ test("the Master hires a named helper and gives it jobs in its own thread", () =
     call("delegate", "delegate-1", { helper: "reviewer", task: "Review the last commit." }),
     say("Hired reviewer; it is reviewing the last commit."),
     say("QUIET"),
+    call("hire", "hire-2", { name: "reviewer", fresh: true }),
+    call("delegate", "delegate-2", { helper: "reviewer", task: "Review it again." }),
+    say("Reviewer starts again in a new thread."),
   ]);
   const outbound: Outbound = (request) =>
     new URL(request.url).hostname === "t3.example.test"
@@ -1250,6 +1259,18 @@ test("the Master hires a named helper and gives it jobs in its own thread", () =
     assert.match(
       JSON.stringify(backend.masterRequests[3]?.input),
       /\[laptop: Fix tests\] completed/,
+    );
+
+    // A fresh start begins a new thread from the helper's jobs and the report that came back.
+    await worker.json("/api/chat", { text: "Give the reviewer a fresh start and review again." });
+    const launches = () => t3.calls.filter((entry) => entry.name === "t3_thread_launch");
+    while (launches().length < 2) {
+      assert.ok(Date.now() < deadline, "The fresh thread did not start");
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    assert.match(
+      String(launches()[1]?.arguments["message"]),
+      /<history>\nJob: Review the last commit\.\nResult: \[laptop: Fix tests\] completed: All tests pass now\.\n<\/history>\n\nReview it again\.$/,
     );
   }, outbound);
 });

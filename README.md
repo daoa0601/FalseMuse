@@ -164,6 +164,11 @@ thread and report back like any thread the Master starts; open the thread to tal
 directly. OptChat gives helpers jobs only when you ask, unless you hired one with `auto`.
 `GET /api/helpers` lists them.
 
+A model must be one the computer's T3 Code offers (OptChat's `computers` tool lists them), and
+changing it switches the helper's thread in place. "Give the reviewer a fresh start" starts a new
+thread; a new thread, including one that replaces a thread you deleted, gets the helper's last eight
+jobs and results. Conversations you have in the thread yourself are not among them.
+
 ## Live ingest
 
 After the history import, set `ingest: {"baseline": "data/phase1-2026-10-05"}` in the node

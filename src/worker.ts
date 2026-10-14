@@ -586,7 +586,11 @@ export class Master extends DurableObject<Env> {
   private pollThreads(): void {
     if (this.polling || !this.computers.watching() || Date.now() < this.nextPoll) return;
     this.polling = this.computers
-      .poll((text) => this.queueWork(text))
+      .poll((text, finished) => {
+        // A helper's thread keeps its results, for the next thread if this one goes.
+        if (finished) this.helpers.record(finished, text);
+        this.queueWork(text);
+      })
       .catch((error: unknown) => this.ctx.storage.put("error", errorMessage(error)))
       .finally(() => {
         this.polling = null;
