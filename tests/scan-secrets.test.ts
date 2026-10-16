@@ -60,3 +60,66 @@ test("the secret scan reports tokens, staged secrets, real config values, and se
   assert.match(result.output, /settings\.yaml:1: non-placeholder secret assignment/);
   assert.match(result.output, /\.env:1: secret-bearing filename must not be committed/);
 });
+
+test("the secret scan recognizes encrypted PKCS#8 private keys", () => {
+  const header = ["-----BEGIN ", "ENCRYPTED ", "PRIVATE KEY-----"].join("");
+  const result = scan((directory) => {
+    writeFileSync(join(directory, "pasted.txt"), `${header}\nMIIB\n`);
+  });
+  assert.equal(result.status, 1, result.output);
+  assert.match(result.output, /pasted\.txt:1: private key material/);
+});
+
+function pushScan(setup: (directory: string, commit: (message: string) => string) => string) {
+  const directory = mkdtempSync(join(tmpdir(), "optchat-outgoing-"));
+  const run = (...args: string[]) =>
+    execFileSync("git", args, { cwd: directory, env, encoding: "utf8" }).trim();
+  try {
+    run("init", "--quiet");
+    run("config", "user.email", "test@example.test");
+    run("config", "user.name", "Test");
+    const commit = (message: string) => {
+      run("add", "--all");
+      run("commit", "--quiet", "--allow-empty", "-m", message);
+      return run("rev-parse", "HEAD");
+    };
+    const stdin = setup(directory, commit);
+    const result = spawnSync(process.execPath, [scanner, "--outgoing"], {
+      cwd: directory,
+      encoding: "utf8",
+      env,
+      input: stdin,
+    });
+    return { status: result.status, output: result.stdout + result.stderr };
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+test("the outgoing scan reports a secret committed and deleted before the push", () => {
+  const zero = "0".repeat(40);
+  const result = pushScan((directory, commit) => {
+    writeFileSync(join(directory, "notes.md"), "clean\n");
+    const base = commit("base");
+    writeFileSync(join(directory, "leak.ts"), `const key = "${token}";\n`);
+    commit("add a key");
+    rmSync(join(directory, "leak.ts"));
+    const head = commit("remove the key");
+    return `refs/heads/main ${head} refs/heads/main ${base}\nrefs/heads/gone ${zero} refs/heads/gone ${base}\n`;
+  });
+  assert.equal(result.status, 1, result.output);
+  assert.match(result.output, /leak\.ts@[0-9a-f]{12}:1: GitHub secret token/);
+});
+
+test("the outgoing scan passes clean history and ignores what the remote already has", () => {
+  const result = pushScan((directory, commit) => {
+    writeFileSync(join(directory, "old.ts"), `const key = "${token}";\n`);
+    const base = commit("already pushed");
+    rmSync(join(directory, "old.ts"));
+    writeFileSync(join(directory, "notes.md"), "clean\n");
+    const head = commit("clean up");
+    return `refs/heads/main ${head} refs/heads/main ${base}\n`;
+  });
+  assert.equal(result.status, 0, result.output);
+  assert.match(result.output, /Secret scan passed \(1 outgoing blobs inspected\)/);
+});
