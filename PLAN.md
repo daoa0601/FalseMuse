@@ -97,7 +97,7 @@ prototype.
   migration list before the next schema change.
 - **Python** (normalizer, redaction, live ingest) runs on the system `python3` rather than `uv`.
 - **`cf` 1.0.0-beta.12** never finishes `cf build` when a pnpm workspace package lies outside this
-  directory, so `ts-quality` is a `link:` dependency instead of a workspace package.
+  directory, so the workspace holds only this package.
 
 ## Design decisions
 

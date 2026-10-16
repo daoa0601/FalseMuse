@@ -15,9 +15,6 @@ importers:
         specifier: 1.0.0
         version: 1.0.0
     devDependencies:
-      '@agentic-orch/ts-quality':
-        specifier: link:../ts-quality
-        version: link:../ts-quality
       '@cloudflare/config':
         specifier: 0.23.0
         version: 0.23.0
