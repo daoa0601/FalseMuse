@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve, join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -7,12 +7,16 @@ if (process.platform !== "darwin")
   throw new Error("This installer is for the laptop's macOS launchd service");
 const configuration = resolve(process.argv[2] ?? "data/laptop-node.json");
 if (!existsSync(configuration)) throw new Error("Register this node before installing its service");
-const label = "com.agentic-orch.optchat-memory";
+const label = "com.anhdao.optchat-memory";
 const directory = join(homedir(), "Library/LaunchAgents");
 const file = join(directory, `${label}.plist`);
-if (existsSync(file))
+// Any label counts, including earlier ones: a second KeepAlive daemon would fight over the node.
+const existing = existsSync(directory)
+  ? readdirSync(directory).find((name) => name.endsWith(".optchat-memory.plist"))
+  : undefined;
+if (existing)
   throw new Error(
-    `A service already exists at ${file}; preserve it and inspect it before replacing it`,
+    `A service already exists at ${join(directory, existing)}; preserve it and inspect it before replacing it`,
   );
 mkdirSync(directory, { recursive: true });
 const escape = (value: string) =>

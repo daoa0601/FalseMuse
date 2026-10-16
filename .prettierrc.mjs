@@ -1,7 +1,5 @@
-import sharedConfig from "@agentic-orch/ts-quality/prettier";
-
 export default {
-  ...sharedConfig,
+  printWidth: 100,
   proseWrap: "always",
   trailingComma: "all",
 };

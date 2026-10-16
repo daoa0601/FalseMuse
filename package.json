@@ -1,5 +1,5 @@
 {
-  "name": "@agentic-orch/optchat-memory",
+  "name": "optchat-memory",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.13.1",
@@ -15,13 +15,13 @@
     "dev": "cf dev",
     "format": "prettier --write . --ignore-unknown",
     "format:check": "prettier --check . --ignore-unknown",
-    "hooks:install": "ts-quality hooks",
+    "hooks:install": "node scripts/quality/install-hooks.ts",
     "lint": "oxlint src node scripts tests --deny-warnings",
     "preinstall": "node scripts/quality/require-pnpm.mjs",
     "prototype": "node scripts/prototype.ts",
     "quality:quick": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm secrets:scan",
     "quality:offline": "pnpm quality:quick && pnpm test && pnpm test:python",
-    "secrets:scan": "ts-quality secrets",
+    "secrets:scan": "node scripts/quality/scan-secrets.ts",
     "test": "cf build && node --test tests/*.test.ts",
     "typecheck": "cf workers types --quiet && tsc -p tsconfig.json && tsc -p tsconfig.worker.json",
     "types:worker": "cf workers types",
@@ -32,7 +32,6 @@
     "@cloudflare/sandbox": "1.0.0"
   },
   "devDependencies": {
-    "@agentic-orch/ts-quality": "link:../ts-quality",
     "@cloudflare/config": "0.23.0",
     "@earendil-works/pi-coding-agent": "1.0.2",
     "@types/node": "22.20.1",

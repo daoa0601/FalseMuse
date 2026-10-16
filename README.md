@@ -21,13 +21,14 @@ the Worker bundle.
 
 ## Setup and checks
 
-The shared lint and TypeScript preset comes from
-[ts-quality](https://github.com/daoa0601/ts-quality), cloned next to this repository.
-
 ```bash
 pnpm install
+pnpm hooks:install
 pnpm quality:offline
 ```
+
+`hooks:install` copies `.githooks/` into Git's hooks directory: `quality:quick` runs before each
+commit and `quality:offline` before each push. It refuses to replace a different existing hook.
 
 `quality:offline` runs formatting, lint, both strict typechecks (Node and Worker), the secret scan,
 the JavaScript tests, and the Python tests. `pnpm test` builds the Worker and its Sandbox image with
@@ -101,7 +102,7 @@ node scripts/install-node-service.ts data/laptop-node.json
 
 Registration issues a node key and a directory allowlist (`read` only by default). `login.ts` gives
 the node its own Pi subscription login. On macOS the daemon runs under launchd as
-`com.agentic-orch.optchat-memory`, logging to `data/node-daemon.log`; elsewhere run
+`com.anhdao.optchat-memory`, logging to `data/node-daemon.log`; elsewhere run
 `node node/daemon.ts data/<name>-node.json`. Each `bash`, `edit`, or `write` call waits for approval
 in the web chat.
 
