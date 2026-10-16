@@ -12,6 +12,5 @@ COPY src ./src
 COPY gitleaks.toml ./gitleaks.toml
 COPY repository.bundle /opt/repository.bundle
 RUN mkdir -p /workspace && git clone /opt/repository.bundle /workspace/repo
-COPY AGENTS.md /workspace/AGENTS.md
 ENV PI_OFFLINE=1 PI_TELEMETRY=0
 CMD ["sleep", "infinity"]
