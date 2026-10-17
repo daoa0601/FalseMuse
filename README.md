@@ -174,4 +174,6 @@ in the thread yourself are not among them.
 
 After the history import, set `ingest: {"baseline": "data/phase1-2026-10-05"}` in the node
 configuration and restart the daemon. It then follows hand-run sessions, uploads each redacted
-transcript, and appends completed scope-A messages in arrival order.
+transcript, and appends completed scope-A messages in arrival order. A session is prepared again
+only when a turn in it finishes; its redacted copy in `data/live-copies/` grows by the new records,
+so Gitleaks scans only those.

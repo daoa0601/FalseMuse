@@ -2,8 +2,9 @@
 
 import argparse
 from contextlib import redirect_stdout
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+import hashlib
 import io
 import json
 import os
@@ -15,7 +16,7 @@ from urllib.request import Request, urlopen
 
 from .normalize import CONFIG
 from .redaction import Redactor, scan_and_redact
-from .sources import ROOTS, Session, custom_report, identify, records, scope_a, text_blocks
+from .sources import ROOTS, Session, custom_report, identify, positioned, records, scope_a, text_blocks
 
 
 def session_name(session: Session) -> str:
@@ -44,37 +45,61 @@ def completed_line(source: str, events) -> int:
     return boundary
 
 
-def prepare(session: Session, output: Path, after_line: int) -> tuple[int, list[dict]]:
-    output.mkdir(mode=0o700)
-    redactor = Redactor()
-    transcript = output / "transcript.jsonl"
+@dataclass(frozen=True)
+class Copy:
+    """How far a recording's redacted copy reaches: the native offset and line read, and its size."""
+    offset: int = 0
+    line: int = 0
+    size: int = 0
+
+
+def prepare(session: Session, work: Path, transcript: Path, after_line: int, done: Copy = Copy()) -> tuple[int, list[dict], Copy]:
+    """Redact and scan the records after `done`, append them to the redacted `transcript`, and
+    return the completed boundary, the scope-A messages after `after_line`, and how far the copy
+    now reaches. New records are scanned on their own: a secret never spans two JSONL records."""
+    work.mkdir(mode=0o700)
     # Compute completion from native metadata; redaction can withhold its payload.
     boundary = completed_line(session.source, records(session.path, session.snapshot_bytes))
-    with transcript.open("w") as handle:
-        for line, event in records(session.path, session.snapshot_bytes):
+    if not transcript.exists() or transcript.stat().st_size < done.size:
+        done = Copy()
+    redactor = Redactor()
+    added = work / "added"
+    added.mkdir()
+    offset, line = done.offset, done.line
+    with (added / "transcript.jsonl").open("w") as handle:
+        for line, event, offset in positioned(session.path, session.snapshot_bytes, (done.offset, done.line)):
             cleaned = redactor.event(event)
             if cleaned is not None:
                 handle.write(json.dumps({"line": line, "event": cleaned}, ensure_ascii=False) + "\n")
-    scan_and_redact(output, CONFIG)
-    complete = output / "complete.jsonl"
+    scan_and_redact(added, CONFIG)
+    # A copy longer than `done` holds records from an attempt that was never recorded.
+    with transcript.open("ab") as handle:
+        handle.truncate(done.size)
+        handle.write((added / "transcript.jsonl").read_bytes())
+    copy = Copy(offset, line, transcript.stat().st_size)
+    if session.kind != "main":
+        return boundary, [], copy
+    complete = work / "complete.jsonl"
     with complete.open("w") as handle:
-        for line, wrapper in records(transcript):
+        for _, wrapper in records(transcript):
             if wrapper["line"] > boundary:
                 break
             handle.write(json.dumps(wrapper, ensure_ascii=False) + "\n")
-    messages = []
-    if session.kind == "main":
-        messages = [
-            {**asdict(message), "session": session_name(session), "index": message.line}
-            for message in scope_a(session, complete) if message.line > after_line
-        ]
-    (output / "messages.jsonl").write_text("".join(json.dumps(message, ensure_ascii=False) + "\n" for message in messages))
+    messages = [
+        {**asdict(message), "session": session_name(session), "index": message.line}
+        for message in scope_a(session, complete) if message.line > after_line
+    ]
+    if not messages:
+        return boundary, [], copy
+    joined = work / "messages"
+    joined.mkdir()
+    (joined / "messages.jsonl").write_text("".join(json.dumps(message, ensure_ascii=False) + "\n" for message in messages))
     # Joined text can reveal a secret split across recorded Claude blocks.
-    scan_and_redact(output, CONFIG)
-    messages = [row for _, row in records(output / "messages.jsonl")]
+    scan_and_redact(joined, CONFIG)
+    messages = [row for _, row in records(joined / "messages.jsonl")]
     if any("text" not in row for row in messages):
         raise ValueError("A live message could not be safely redacted; the original recording remains local")
-    return boundary, messages
+    return boundary, messages, copy
 
 
 class LiveIngest:
@@ -86,6 +111,13 @@ class LiveIngest:
         state.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.database = sqlite3.connect(state)
         self.database.execute("CREATE TABLE IF NOT EXISTS recordings (session TEXT PRIMARY KEY, size INTEGER, modified INTEGER, line INTEGER)")
+        columns = {row[1] for row in self.database.execute("PRAGMA table_info(recordings)")}
+        for column in ("copy_offset", "copy_line", "copy_size"):
+            if column not in columns:
+                self.database.execute(f"ALTER TABLE recordings ADD COLUMN {column} INTEGER")
+        # Each recording's redacted copy, extended as it grows so only new records are scanned.
+        self.copies = self.directory / "live-copies"
+        self.copies.mkdir(exist_ok=True, mode=0o700)
         self.database.execute("CREATE TABLE IF NOT EXISTS settings (name TEXT PRIMARY KEY, value TEXT)")
         if baseline and not self.database.execute("SELECT 1 FROM settings WHERE name='baseline'").fetchone():
             for _, entry in records(baseline / "manifest.jsonl"):
@@ -93,7 +125,7 @@ class LiveIngest:
                 name = family + "/" + entry["session"].split("/", 1)[1]
                 normalized = baseline / entry["normalized"] if entry.get("normalized") else None
                 line = max((row["line"] for _, row in records(normalized)), default=0) if normalized else 0
-                self.database.execute("INSERT OR IGNORE INTO recordings VALUES (?, ?, 0, ?)", (name, entry["snapshot_bytes"], line))
+                self.database.execute("INSERT OR IGNORE INTO recordings (session, size, modified, line) VALUES (?, ?, 0, ?)", (name, entry["snapshot_bytes"], line))
                 self.paths[entry["source_path"]] = (entry["snapshot_bytes"], 0)
             self.database.execute("INSERT INTO settings VALUES ('baseline', ?)", (str(baseline),))
             self.database.commit()
@@ -136,15 +168,23 @@ class LiveIngest:
         already = set(self.skipped)
         for session, modified in self.changed():
             name = session_name(session)
-            previous = self.database.execute("SELECT line FROM recordings WHERE session=?", (name,)).fetchone()
+            previous = self.database.execute("SELECT line, copy_offset, copy_line, copy_size FROM recordings WHERE session=?", (name,)).fetchone()
             after = previous[0] if previous else 0
+            if previous and completed_line(session.source, records(session.path, session.snapshot_bytes)) <= after:
+                # Only completed records become messages; the rest waits for its turn to finish.
+                self.paths[str(session.path)] = (session.snapshot_bytes, modified)
+                continue
+            done = Copy(*previous[1:]) if previous and previous[1] is not None else Copy()
+            transcript = self.copies / (hashlib.sha256(name.encode()).hexdigest()[:32] + ".jsonl")
             with tempfile.TemporaryDirectory(prefix="optchat-live-", dir=self.directory) as temp:
-                output = Path(temp) / "prepared"
                 with redirect_stdout(io.StringIO()):
-                    boundary, messages = prepare(session, output, after)
-                upload(session, output / "transcript.jsonl", messages)
-            self.database.execute("INSERT INTO recordings VALUES (?, ?, ?, ?) ON CONFLICT(session) DO UPDATE SET size=excluded.size, modified=excluded.modified, line=excluded.line",
-                                  (name, session.snapshot_bytes, modified, max(after, boundary)))
+                    boundary, messages, copy = prepare(session, Path(temp) / "prepared", transcript, after, done)
+                upload(session, transcript, messages)
+            self.database.execute(
+                "INSERT INTO recordings (session, size, modified, line, copy_offset, copy_line, copy_size) VALUES (?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(session) DO UPDATE SET size=excluded.size, modified=excluded.modified, line=excluded.line, "
+                "copy_offset=excluded.copy_offset, copy_line=excluded.copy_line, copy_size=excluded.copy_size",
+                (name, session.snapshot_bytes, modified, max(after, boundary), copy.offset, copy.line, copy.size))
             self.database.commit()
             self.paths[str(session.path)] = (session.snapshot_bytes, modified)
             counts["recordings"] += 1
