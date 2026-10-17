@@ -7,7 +7,7 @@ import { Computers } from "../src/t3.ts";
 import { Helpers } from "../src/helpers.ts";
 
 /**
- * A computer's T3 Code with one project and three providers; threads in `gone` refuse every call,
+ * A computer's T3 Code with two projects and three providers; threads in `gone` refuse every call,
  * and every thread reports `status`, with "Found 2 bugs." as its last reply.
  */
 async function withT3(
@@ -60,7 +60,13 @@ async function withT3(
         if (!reads.includes(name)) calls.push({ name, arguments: args });
         const structured =
           name === "t3_project_list"
-            ? { projects: [{ id: "p1", title: "optchat", workspaceRoot: "/w" }], nextCursor: null }
+            ? {
+                projects: [
+                  { id: "p1", title: "optchat", workspaceRoot: "/w" },
+                  { id: "p2", title: "website", workspaceRoot: "/v" },
+                ],
+                nextCursor: null,
+              }
             : name === "orchestrator_capabilities"
               ? { providers }
               : name === "t3_thread_launch"
@@ -121,7 +127,8 @@ test("a hired helper keeps one thread: the first job briefs it and later jobs qu
       name: "reviewer",
       instructions: "Review diffs for bugs. Be terse.",
       computer: "laptop",
-      project: "optchat",
+      // Kept by its id, so another spelling of the same project keeps the thread.
+      project: "p1",
       provider: "codex",
       model: "gpt-6.1-sol",
       auto: false,
@@ -216,9 +223,18 @@ test("a hired helper keeps one thread: the first job briefs it and later jobs qu
       /Job: Review again\.\n<\/history>\n\nStart over\.$/,
     );
 
-    // Moving a helper to another project starts a new thread there.
-    await helpers.hire({ name: "reviewer", project: "p1" });
-    assert.equal(helpers.list()[0]?.thread, null);
+    // Naming its project another way keeps the thread; another project starts a new one there.
+    await helpers.hire({ name: "reviewer", project: "OptChat" });
+    assert.equal(helpers.list()[0]?.thread, "th3");
+    await assert.rejects(
+      helpers.hire({ name: "reviewer", project: "nowhere" }),
+      /No project nowhere on laptop; it has optchat, website/,
+    );
+    await helpers.hire({ name: "reviewer", project: "website" });
+    assert.deepEqual(
+      helpers.list().map(({ project, thread }) => [project, thread]),
+      [["p2", null]],
+    );
 
     assert.deepEqual(helpers.retire("reviewer"), { retired: "reviewer" });
     assert.deepEqual(helpers.list(), []);
@@ -275,4 +291,39 @@ test("hiring checks the name, the computer, the instructions and the model", () 
       { provider: "codex", label: "Codex", models: ["gpt-6.1-sol", "gpt-6-astra"] },
       { provider: "claudeAgent", label: "Claude", models: ["claude-opus-5-5"] },
     ]);
+  }));
+
+test("a resumed turn's repeated job does not reach the thread it started a second time", () =>
+  withT3(async ({ helpers, calls }) => {
+    await helpers.hire({
+      name: "reviewer",
+      instructions: "Review diffs.",
+      computer: "laptop",
+      project: "optchat",
+    });
+    const first = await helpers.delegate("reviewer", "Review the last commit.", "call-1");
+    assert.deepEqual(
+      await helpers.delegate("reviewer", "Review the last commit.", "call-1"),
+      first,
+    );
+    assert.deepEqual(
+      calls.map(({ name }) => name),
+      ["t3_thread_launch"],
+    );
+  }));
+
+test("an empty provider and model put a helper back on the project's default", () =>
+  withT3(async ({ helpers }) => {
+    await helpers.hire({
+      name: "reviewer",
+      instructions: "Review diffs.",
+      computer: "laptop",
+      project: "optchat",
+      provider: "codex",
+      model: "gpt-6.1-sol",
+    });
+    await helpers.delegate("reviewer", "Review the last commit.", "call-1");
+    const reset = await helpers.hire({ name: "reviewer", provider: "", model: "" });
+    // T3 Code takes no selection back to the default, so the next job starts a new thread.
+    assert.deepEqual([reset.provider, reset.model, reset.thread], [null, null, null]);
   }));

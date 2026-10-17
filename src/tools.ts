@@ -81,7 +81,7 @@ const MASTER_TOOLS = [
   ),
   tool(
     "hire",
-    "Hire a named helper, or change one, only when the user asks. Its instructions (up to 4,000 characters) go with its next job; provider and model name a provider instance and model that computers lists for its computer, or omit both for the project's default. fresh starts it in a new thread, given its recent jobs and results. Fields left out keep their values.",
+    "Hire a named helper, or change one, only when the user asks. Its instructions (up to 4,000 characters) go with its next job; provider and model name a provider instance and model that computers lists for its computer; give both empty for the project's default. project is a project's title or id on that computer. fresh starts it in a new thread, given its recent jobs and results. Fields left out keep their values.",
     {
       name: string,
       instructions: string,

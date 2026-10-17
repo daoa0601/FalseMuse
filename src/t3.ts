@@ -307,7 +307,8 @@ export class Computers {
     return projects;
   }
 
-  private async project(name: string, project: unknown): Promise<string> {
+  /** The id of a project on a computer, named by its id or, in any case, its title. */
+  async project(name: string, project: unknown): Promise<string> {
     const projects = await this.projects(name);
     const wanted = typeof project === "string" ? project.toLowerCase() : "";
     const match = projects.find(
@@ -413,6 +414,11 @@ export class Computers {
       this.watch(name, thread, title);
     });
     return result;
+  }
+
+  /** A launch was made, or may have begun, under this tool call id. */
+  launched(request: string): boolean {
+    return this.database.rows("SELECT 1 FROM t3_launches WHERE id=?", request).length > 0;
   }
 
   async threads(name: string, project: unknown) {

@@ -81,9 +81,11 @@ export class Helpers {
   }
 
   /**
-   * Hire a helper, or change one: fields left out keep their values. A model is checked against
-   * what the computer offers, and switches the helper's thread in place. A new computer or project,
-   * or `fresh`, starts a new thread at the next job; new instructions go with the next job.
+   * Hire a helper, or change one: fields left out keep their values, and an empty provider and
+   * model return it to the project's default. The project is checked on the computer and kept by
+   * id. A model is checked against what the computer offers, and switches the helper's thread in
+   * place. A new computer or project, or `fresh`, starts a new thread at the next job; new
+   * instructions go with the next job.
    */
   async hire(input: unknown): Promise<Helper> {
     if (!isRecord(input)) throw new Error("hire needs a helper's name and instructions");
@@ -103,10 +105,20 @@ export class Helpers {
     if (!this.computers.list().some((entry) => entry.name === computer)) {
       throw new Error(`No computer named ${computer}; see computers`);
     }
-    const project = optional(input, "project") ?? earlier?.project ?? "";
-    if (!project) throw new Error(`${name} needs a project on ${computer}`);
-    const provider = optional(input, "provider") ?? earlier?.provider ?? null;
-    const model = optional(input, "model") ?? earlier?.model ?? null;
+    const named = optional(input, "project") ?? earlier?.project ?? "";
+    if (!named) throw new Error(`${name} needs a project on ${computer}`);
+    // Kept by id, so another name for the same project keeps the thread.
+    const project =
+      earlier?.computer === computer && named === earlier.project
+        ? named
+        : await this.computers.project(computer, named);
+    // Empty text clears the model back to the project's default; leaving it out keeps it.
+    const chosen = (field: "provider" | "model") => {
+      const value = optional(input, field);
+      return value === undefined ? (earlier?.[field] ?? null) : value || null;
+    };
+    const provider = chosen("provider");
+    const model = chosen("model");
     if (!provider !== !model) {
       throw new Error("Give both a provider and a model, or neither for the project's default");
     }
@@ -223,7 +235,8 @@ export class Helpers {
   async delegate(name: unknown, task: string, request: string) {
     const row = this.row(name);
     if (!task.trim()) throw new Error("delegate needs a task");
-    if (row.thread) {
+    // A repeat of a call that started the thread gets that launch back, not a second copy of the job.
+    if (row.thread && !this.computers.launched(request)) {
       try {
         const job = row.briefed ? task : this.brief(row, task, null);
         await this.computers.send(row.computer, row.thread, job, "queue", request);
