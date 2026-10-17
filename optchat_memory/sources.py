@@ -135,9 +135,16 @@ def identify(source: str, root: Path, path: Path) -> Session:
 
 def records(path: Path, snapshot_bytes: int | None = None) -> Iterator[tuple[int, dict]]:
     """Read a fixed file boundary; a live writer's unfinished last record is deferred."""
+    for line, event, _ in positioned(path, snapshot_bytes):
+        yield line, event
+
+
+def positioned(path: Path, snapshot_bytes: int | None = None, start: tuple[int, int] = (0, 0)) -> Iterator[tuple[int, dict, int]]:
+    """Records from `start` (a byte offset and the lines before it), each with the offset after it."""
     limit = path.stat().st_size if snapshot_bytes is None else snapshot_bytes
     with path.open("rb") as handle:
-        line = 0
+        handle.seek(start[0])
+        line = start[1]
         while handle.tell() < limit:
             raw = handle.readline(limit - handle.tell())
             line += 1
@@ -153,7 +160,7 @@ def records(path: Path, snapshot_bytes: int | None = None) -> Iterator[tuple[int
                 raise ValueError(f"{path}:{line}: invalid JSON record") from error
             if not isinstance(event, dict):
                 raise ValueError(f"{path}:{line}: expected a JSON object")
-            yield line, event
+            yield line, event, handle.tell()
 
 
 def scope_a(session: Session, transcript: Path) -> list[Message]:
