@@ -13,6 +13,7 @@ const tool = (
 });
 const integer = { type: "integer" };
 const string = { type: "string" };
+const boolean = { type: "boolean" };
 
 const MASTER_TOOLS = [
   tool(
@@ -72,6 +73,34 @@ const MASTER_TOOLS = [
   tool("interrupt", "Stop the running turn of a T3 Code thread.", {
     computer: string,
     thread: string,
+  }),
+  tool(
+    "helpers",
+    "List the user's named helpers: each one's instructions, computer, project, model, whether you may use it unasked (auto), and its T3 Code thread.",
+    {},
+  ),
+  tool(
+    "hire",
+    "Hire a named helper, or change one, only when the user asks. Its instructions (up to 4,000 characters) go with its next job; provider and model name a provider instance and model that computers lists for its computer; give both empty for the project's default. project is a project's title or id on that computer. fresh starts it in a new thread, given its recent jobs and results. Fields left out keep their values.",
+    {
+      name: string,
+      instructions: string,
+      computer: string,
+      project: string,
+      provider: string,
+      model: string,
+      auto: boolean,
+      fresh: boolean,
+    },
+    ["name"],
+  ),
+  tool(
+    "delegate",
+    "Give a helper a job. It queues in the helper's own T3 Code thread, which keeps its context between jobs, and its result comes back as a message starting [computer: Helper: name].",
+    { helper: string, task: string },
+  ),
+  tool("retire", "Forget a helper when the user asks; its thread stays in T3 Code.", {
+    name: string,
   }),
   tool("tell", "Steer a running Pi session with another instruction.", {
     id: string,

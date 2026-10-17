@@ -18,16 +18,25 @@ const TERMINAL = new Set([
 ]);
 const REPORT_CHARS = 4_000;
 /** OptChat's own provider in T3 Code (bin/optchat-acp), as the owner's settings.json names it. */
-const OPTCHAT_MODEL = { instanceId: "optchat", model: "default" };
+const OPTCHAT_MODEL: ModelSelection = { instanceId: "optchat", model: "default" };
 /** Tries to post a turn, a minute apart and doubling, before it is left unsent. */
 const POST_ATTEMPTS = 5;
 
 /** The computer's sign-in is missing, expired or refused: only the owner can renew it. */
-class SignInNeeded extends Error {
+export class SignInNeeded extends Error {
   constructor(name: string) {
     super(`${name} needs the owner to sign in again`);
   }
 }
+
+/** A T3 Code provider instance and one of its models, as `t3_thread_launch` takes them. */
+export interface ModelSelection {
+  instanceId: string;
+  model: string;
+}
+
+/** A report on watched threads; a finished thread's report names it. */
+export type Report = (text: string, finished?: { computer: string; thread: string }) => void;
 
 interface Computer {
   name: string;
@@ -298,7 +307,8 @@ export class Computers {
     return projects;
   }
 
-  private async project(name: string, project: unknown): Promise<string> {
+  /** The id of a project on a computer, named by its id or, in any case, its title. */
+  async project(name: string, project: unknown): Promise<string> {
     const projects = await this.projects(name);
     const wanted = typeof project === "string" ? project.toLowerCase() : "";
     const match = projects.find(
@@ -312,13 +322,17 @@ export class Computers {
     return match.id;
   }
 
-  /** Every computer, and the projects of those signed in. */
+  /** Every computer, and the projects, providers and models of those signed in. */
   async overview() {
     return Promise.all(
       this.list().map(async (computer) => {
         if (!computer.connected) return { ...computer, projects: [] };
         try {
-          return { ...computer, projects: await this.projects(computer.name) };
+          const [projects, providers] = await Promise.all([
+            this.projects(computer.name),
+            this.models(computer.name),
+          ]);
+          return { ...computer, projects, providers };
         } catch (error) {
           return { ...computer, error: errorMessage(error) };
         }
@@ -326,12 +340,46 @@ export class Computers {
     );
   }
 
+  /** The provider instances a computer's T3 Code offers and their models, without OptChat's own. */
+  async models(
+    name: string,
+  ): Promise<{ provider: string; label: string | null; models: string[] }[]> {
+    const result = await this.call(name, "orchestrator_capabilities", {});
+    const providers = isRecord(result) ? result["providers"] : null;
+    if (!Array.isArray(providers))
+      throw new Error("orchestrator_capabilities returned no providers");
+    return providers.filter(isRecord).flatMap((entry) => {
+      const provider = entry["providerInstanceId"];
+      if (typeof provider !== "string" || provider === OPTCHAT_MODEL.instanceId) return [];
+      const models = Array.isArray(entry["models"]) ? entry["models"].filter(isRecord) : [];
+      return [
+        {
+          provider,
+          label: typeof entry["displayName"] === "string" ? entry["displayName"] : null,
+          models: models.flatMap((model) => (typeof model["id"] === "string" ? [model["id"]] : [])),
+        },
+      ];
+    });
+  }
+
+  /** Switch a thread to another provider instance or model. */
+  configure(name: string, thread: string, modelSelection: ModelSelection) {
+    return this.call(name, "t3_thread_configure", { threadId: thread, modelSelection });
+  }
+
   /**
    * Start a thread in a project; it runs within the access the owner approved, never above.
    * `request` is the tool call's id: a resumed turn gets the first result instead of a second
-   * thread.
+   * thread. Without a model, the thread uses the project's default in T3 Code.
    */
-  async launch(name: string, project: unknown, title: string, task: string, request: string) {
+  async launch(
+    name: string,
+    project: unknown,
+    title: string,
+    task: string,
+    request: string,
+    modelSelection?: ModelSelection,
+  ) {
     const [earlier] = this.database.rows<{ result: string | null }>(
       "SELECT result FROM t3_launches WHERE id=?",
       request,
@@ -346,7 +394,12 @@ export class Computers {
     this.database.exec("INSERT INTO t3_launches VALUES (?, NULL)", request);
     let result: unknown;
     try {
-      result = await this.call(name, "t3_thread_launch", { projectId, title, message: task });
+      result = await this.call(name, "t3_thread_launch", {
+        projectId,
+        title,
+        message: task,
+        ...(modelSelection ? { modelSelection } : {}),
+      });
     } catch (error) {
       this.database.exec("DELETE FROM t3_launches WHERE id=?", request);
       throw error;
@@ -361,6 +414,11 @@ export class Computers {
       this.watch(name, thread, title);
     });
     return result;
+  }
+
+  /** A launch was made, or may have begun, under this tool call id. */
+  launched(request: string): boolean {
+    return this.database.rows("SELECT 1 FROM t3_launches WHERE id=?", request).length > 0;
   }
 
   async threads(name: string, project: unknown) {
@@ -577,10 +635,10 @@ export class Computers {
 
   /**
    * Check every watched thread, each computer at once and its threads in turn: a finished one
-   * reports its last reply and is dropped; one waiting on the owner reports that once. A computer
-   * that needs a new sign-in reports it once.
+   * reports its last reply and is dropped, naming the thread; one waiting on the owner reports that
+   * once. A computer that needs a new sign-in reports it once.
    */
-  async poll(report: (text: string) => void): Promise<void> {
+  async poll(report: Report): Promise<void> {
     const byComputer = new Map<string, Watch[]>();
     for (const watch of this.database.rows<Watch>("SELECT * FROM t3_watches")) {
       byComputer.set(watch.computer, [...(byComputer.get(watch.computer) ?? []), watch]);
@@ -604,7 +662,7 @@ export class Computers {
     );
   }
 
-  private async check(watch: Watch, report: (text: string) => void): Promise<void> {
+  private async check(watch: Watch, report: Report): Promise<void> {
     const state = await this.read(watch.computer, watch.thread, undefined, 1);
     // A title is the thread's own text: keep it to one line that cannot close the brackets.
     const head = `[${watch.computer}: ${state.title.replace(/[\r\n[\]]+/g, " ").trim()}]`;
@@ -635,7 +693,10 @@ export class Computers {
         watch.thread,
         watch.generation,
       );
-      report(`${head} ${state.status}: ${(reply ?? "(no reply)").slice(0, REPORT_CHARS)}`);
+      report(`${head} ${state.status}: ${(reply ?? "(no reply)").slice(0, REPORT_CHARS)}`, {
+        computer: watch.computer,
+        thread: watch.thread,
+      });
     } else if (state.status === "waiting" || state.pendingRequests > 0) {
       if (watch.waiting) return;
       this.database.exec(current("waiting=1"), watch.computer, watch.thread, watch.generation);

@@ -962,6 +962,12 @@ function fakeT3() {
           projects: [{ id: "p1", title: "optchat", workspaceRoot: "/work/optchat", scripts: [] }],
           nextCursor: null,
         };
+      case "orchestrator_capabilities":
+        return {
+          providers: [
+            { providerInstanceId: "codex", displayName: "Codex", models: [{ id: "gpt-6.1-sol" }] },
+          ],
+        };
       case "t3_thread_launch":
         return { threadId: `th${++launches}`, projectId: "p1", runId: "r1", status: "starting" };
       case "t3_thread_read":
@@ -1036,6 +1042,43 @@ function fakeT3() {
   };
 }
 
+/** The owner signs the Master in to the laptop's T3 Code, as the callback page finishes it. */
+async function signInT3(worker: TestWorker, t3: ReturnType<typeof fakeT3>): Promise<void> {
+  const { authorize } = await worker.json<{ authorize: string }>("/api/computers", {
+    name: "laptop",
+    url: "https://t3.example.test/mcp",
+  });
+  const params = new URL(authorize).searchParams;
+  assert.equal(
+    new URL(authorize).origin + new URL(authorize).pathname,
+    "https://t3.example.test/oauth/mcp/authorize",
+  );
+  assert.deepEqual(
+    [params.get("client_id"), params.get("redirect_uri"), params.get("code_challenge_method")],
+    ["client-1", "https://example.test/oauth/t3/callback", "S256"],
+  );
+  assert.equal(params.get("scope"), "orchestration:read orchestration:operate");
+  t3.approve(authorize);
+  const callback = `/oauth/t3/callback?code=approved&state=${params.get("state")}&iss=https://t3.example.test`;
+  const signedIn = await worker.fetch(callback);
+  assert.equal(signedIn.status, 200);
+  assert.match(await signedIn.text(), /can now reach laptop/);
+  // The state is single-use, and the route needs no owner key.
+  assert.equal((await worker.fetch(callback)).status, 400);
+  const [computer] = await worker.json<{ name: string; connected: boolean }[]>("/api/computers");
+  assert.deepEqual([computer?.name, computer?.connected], ["laptop", true]);
+}
+
+/** The Master's own subscription login, against the fake backend. */
+async function signInMaster(worker: TestWorker): Promise<void> {
+  await worker.request("/api/auth/start", {});
+  const connected = Date.now() + 15_000;
+  while (!(await worker.json<{ authenticated: boolean }>("/api/status")).authenticated) {
+    assert.ok(Date.now() < connected, "The device login did not complete");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+}
+
 test("the owner signs the Master in to a computer's T3 Code, and a launched thread reports back", () => {
   const t3 = fakeT3();
   const backend = fakeSubscription([
@@ -1066,38 +1109,11 @@ test("the owner signs the Master in to a computer's T3 Code, and a launched thre
       ? t3.outbound(request)
       : backend.outbound(request);
   return withWorker(async (worker) => {
-    const { authorize } = await worker.json<{ authorize: string }>("/api/computers", {
-      name: "laptop",
-      url: "https://t3.example.test/mcp",
-    });
-    const params = new URL(authorize).searchParams;
-    assert.equal(
-      new URL(authorize).origin + new URL(authorize).pathname,
-      "https://t3.example.test/oauth/mcp/authorize",
-    );
-    assert.deepEqual(
-      [params.get("client_id"), params.get("redirect_uri"), params.get("code_challenge_method")],
-      ["client-1", "https://example.test/oauth/t3/callback", "S256"],
-    );
-    assert.equal(params.get("scope"), "orchestration:read orchestration:operate");
-    t3.approve(authorize);
-    const callback = `/oauth/t3/callback?code=approved&state=${params.get("state")}&iss=https://t3.example.test`;
-    const signedIn = await worker.fetch(callback);
-    assert.equal(signedIn.status, 200);
-    assert.match(await signedIn.text(), /can now reach laptop/);
-    // The state is single-use, and the route needs no owner key.
-    assert.equal((await worker.fetch(callback)).status, 400);
-    const [computer] = await worker.json<{ name: string; connected: boolean }[]>("/api/computers");
-    assert.deepEqual([computer?.name, computer?.connected], ["laptop", true]);
+    await signInT3(worker, t3);
     await worker.request("/api/instructions", { text: " Call me Sam. " }, "PUT");
     assert.deepEqual(await worker.json("/api/instructions"), { text: "Call me Sam." });
 
-    await worker.request("/api/auth/start", {});
-    const connected = Date.now() + 15_000;
-    while (!(await worker.json<{ authenticated: boolean }>("/api/status")).authenticated) {
-      assert.ok(Date.now() < connected, "The device login did not complete");
-      await new Promise((resolve) => setTimeout(resolve, 200));
-    }
+    await signInMaster(worker);
     const { id } = await worker.json<{ id: number }>("/api/chat", {
       text: "Fix the failing tests in optchat on my laptop",
     });
@@ -1181,5 +1197,80 @@ test("the owner signs the Master in to a computer's T3 Code, and a launched thre
     assert.equal(posts().length, 1);
     // The posted thread is not watched, so its end never comes back as a turn.
     assert.equal(backend.masterRequests.length, 4);
+  }, outbound);
+});
+
+test("the Master hires a named helper and gives it jobs in its own thread", () => {
+  const t3 = fakeT3();
+  const call = (name: string, id: string, args: Record<string, unknown>) => [
+    { type: "function_call", name, call_id: id, arguments: JSON.stringify(args) },
+  ];
+  const say = (text: string) => [{ type: "message", content: [{ type: "output_text", text }] }];
+  const backend = fakeSubscription([
+    call("hire", "hire-1", {
+      name: "reviewer",
+      instructions: "Review diffs for bugs.",
+      computer: "laptop",
+      project: "optchat",
+      provider: "codex",
+      model: "gpt-6.1-sol",
+    }),
+    call("delegate", "delegate-1", { helper: "reviewer", task: "Review the last commit." }),
+    say("Hired reviewer; it is reviewing the last commit."),
+    say("QUIET"),
+    call("hire", "hire-2", { name: "reviewer", fresh: true }),
+    call("delegate", "delegate-2", { helper: "reviewer", task: "Review it again." }),
+    say("Reviewer starts again in a new thread."),
+  ]);
+  const outbound: Outbound = (request) =>
+    new URL(request.url).hostname === "t3.example.test"
+      ? t3.outbound(request)
+      : backend.outbound(request);
+  return withWorker(async (worker) => {
+    await signInT3(worker, t3);
+    await signInMaster(worker);
+    await worker.json("/api/chat", { text: "Hire a reviewer on my laptop and have it review." });
+    const deadline = Date.now() + 20_000;
+    // The helper's thread reports back as a turn of its own.
+    while (backend.masterRequests.length < 4) {
+      assert.ok(Date.now() < deadline, "The helper's report did not start a turn");
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    const launch = t3.calls.find((entry) => entry.name === "t3_thread_launch")?.arguments;
+    assert.deepEqual(
+      { ...launch, message: undefined },
+      {
+        projectId: "p1",
+        title: "Helper: reviewer",
+        modelSelection: { instanceId: "codex", model: "gpt-6.1-sol" },
+        message: undefined,
+      },
+    );
+    assert.match(
+      String(launch?.["message"]),
+      /Review diffs for bugs\.[\s\S]*Review the last commit\.$/,
+    );
+    assert.deepEqual(
+      (await worker.json<{ name: string; thread: string; auto: boolean }[]>("/api/helpers")).map(
+        ({ name, thread, auto }) => [name, thread, auto],
+      ),
+      [["reviewer", "th1", false]],
+    );
+    assert.match(
+      JSON.stringify(backend.masterRequests[3]?.input),
+      /\[laptop: Fix tests\] completed/,
+    );
+
+    // A fresh start begins a new thread from the helper's jobs and the report that came back.
+    await worker.json("/api/chat", { text: "Give the reviewer a fresh start and review again." });
+    const launches = () => t3.calls.filter((entry) => entry.name === "t3_thread_launch");
+    while (launches().length < 2) {
+      assert.ok(Date.now() < deadline, "The fresh thread did not start");
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    assert.match(
+      String(launches()[1]?.arguments["message"]),
+      /<history>\nJob: Review the last commit\.\nResult: \[laptop: Fix tests\] completed: All tests pass now\.\n<\/history>\n\nReview it again\.$/,
+    );
   }, outbound);
 });
