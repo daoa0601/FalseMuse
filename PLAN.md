@@ -141,6 +141,17 @@ Object storage. Each node uses its own Pi login, and the Sandbox's Durable Objec
 of its refresh token. The Claude subscription is usable only through Claude Code itself, so it is
 not a cloud path.
 
+**Durable Object budget.** Duration is billed as 128 MB of wall-clock time while an object is active
+or cannot hibernate. The paid plan includes 400,000 GB-s a month, and use beyond that is billed in
+whole millions at $12.50 each. The Master awake all month is 324,000 GB-s, so it fits, but a second
+object awake all month does not. Every other object class therefore idles to nothing: sockets use
+the Hibernation API, alarms stop when there is no work, and long work runs in containers or on the
+owner's computers rather than in a waiting object. The Sandbox does this: its alarm ends when its
+container saves after 2 idle minutes. Delegated work goes to helpers (T3 Code threads), not to
+subagent objects. A subagent object would think through the laptop relay like the Master and add
+duration for no gain. A separate object is for state that must live in the cloud on its own, such as
+a public persona.
+
 **Compactor probe (2026-10-04).** 24 real messages through the earlier COMPACT prompt on Sol: 0
 refusals, 6 lines over 512 bytes by 1–44 bytes, which the retry loop handles.
 
