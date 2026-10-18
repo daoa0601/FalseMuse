@@ -147,10 +147,16 @@ whole millions at $12.50 each. The Master awake all month is 324,000 GB-s, so it
 object awake all month does not. Every other object class therefore idles to nothing: sockets use
 the Hibernation API, alarms stop when there is no work, and long work runs in containers or on the
 owner's computers rather than in a waiting object. The Sandbox does this: its alarm ends when its
-container saves after 2 idle minutes. Delegated work goes to helpers (T3 Code threads), not to
-subagent objects. A subagent object would think through the laptop relay like the Master and add
-duration for no gain. A separate object is for state that must live in the cloud on its own, such as
-a public persona.
+container saves after 2 idle minutes.
+
+**Subagents cost time, not objects.** The Master already fans out: any number of T3 Code threads
+(`launch`), helpers (`delegate`) and Pi tasks (`spawn`) run at once on the owner's computers or in
+the Sandbox, each reporting back as a `work` message, and a T3 Code thread can start its own child
+agents with T3 Code's `delegate_task`. None of that adds Durable Object duration. Subagent loops
+that must run in the cloud should run as concurrent loops inside the Master, which shares one
+object's duration across everything it does at once; a separate object per subagent is only for
+isolation (its own memory or permissions) and must hibernate when idle. Either way the limit is
+model access: cloud calls go through the laptop relay and its subscription's rate limits.
 
 **Compactor probe (2026-10-04).** 24 real messages through the earlier COMPACT prompt on Sol: 0
 refusals, 6 lines over 512 bytes by 1–44 bytes, which the retry loop handles.
