@@ -7,6 +7,7 @@ import { pipeline } from "node:stream/promises";
 import { WebSocketServer, WebSocket } from "ws";
 import { Master, serve } from "../src/master.ts";
 import type { MasterConfig, MasterHost, NodeSocket, Settings } from "../src/host.ts";
+import type { SqlDatabase } from "../src/database.ts";
 import { errorMessage, parseJson } from "../src/json.ts";
 import { openDatabase } from "./sqlite.ts";
 import { DirectoryBucket } from "./bucket.ts";
@@ -122,6 +123,28 @@ export class AlarmClock {
   }
 }
 
+/** The Master's settings, kept as JSON in its own database. */
+export function settingsTable(sql: SqlDatabase): Omit<Settings, "getAlarm" | "setAlarm"> {
+  sql.exec("CREATE TABLE IF NOT EXISTS host_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+  return {
+    async get<T>(key: string) {
+      const [row] = sql.rows<{ value: string }>("SELECT value FROM host_settings WHERE key=?", key);
+      // The host wrote this value itself, from what the Master put.
+      return row ? (parseJson(row.value) as T) : undefined;
+    },
+    async put(key, value) {
+      sql.exec(
+        "INSERT INTO host_settings VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        key,
+        JSON.stringify(value),
+      );
+    },
+    async delete(key) {
+      sql.exec("DELETE FROM host_settings WHERE key=?", key);
+    },
+  };
+}
+
 /** The request, addressed to the Master's own origin whatever Host header the client sent. */
 function toRequest(message: IncomingMessage, origin: string): Request {
   const headers = new Headers();
@@ -157,25 +180,10 @@ async function respond(response: Response, output: ServerResponse): Promise<void
 export async function startMaster(options: LocalMasterOptions): Promise<LocalMaster> {
   mkdirSync(options.directory, { recursive: true, mode: 0o700 });
   const sql = openDatabase(join(options.directory, "master.sqlite"));
-  sql.exec("CREATE TABLE IF NOT EXISTS host_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
 
   const alarm = new AlarmClock(() => master.alarm());
   const storage: Settings = {
-    async get<T>(key: string) {
-      const [row] = sql.rows<{ value: string }>("SELECT value FROM host_settings WHERE key=?", key);
-      // The host wrote this value itself, from what the Master put.
-      return row ? (parseJson(row.value) as T) : undefined;
-    },
-    async put(key, value) {
-      sql.exec(
-        "INSERT INTO host_settings VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        key,
-        JSON.stringify(value),
-      );
-    },
-    async delete(key) {
-      sql.exec("DELETE FROM host_settings WHERE key=?", key);
-    },
+    ...settingsTable(sql),
     async getAlarm() {
       return alarm.get();
     },

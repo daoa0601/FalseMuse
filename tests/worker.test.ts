@@ -12,6 +12,10 @@ import {
   type WebSocket,
 } from "miniflare";
 
+import { moveToLaptop } from "../scripts/move-to-laptop.ts";
+import { startMaster } from "../node/local-master.ts";
+import { modelReply } from "./support.ts";
+
 const OWNER = "test-owner";
 
 /** Test responses are JSON from our own Worker; assertions check the fields they read. */
@@ -1274,3 +1278,62 @@ test("the Master hires a named helper and gives it jobs in its own thread", () =
     );
   }, outbound);
 });
+
+test("the Master moves to a local Master with its memory, settings, schedules and transcripts", () =>
+  withWorker(async (worker) => {
+    await worker.remember("The owner keeps a lighthouse logbook");
+    await worker.upload("moved-1", '{"line":1,"event":{"text":"from the cloud"}}\n');
+    await worker.json("/api/instructions", { text: "Be brief." }, "PUT");
+    await worker.json("/api/schedules", {
+      prompt: "Check the logbook.",
+      at: new Date(Date.now() + 86_400_000).toISOString(),
+      every_minutes: 0,
+    });
+    assert.equal((await worker.fetch("/api/export/schema")).status, 401);
+
+    const target = join(worker.directory, "local");
+    const lines: string[] = [];
+    // Miniflare's responses carry the same fields the move reads from fetch's.
+    const get = (path: string) => worker.request(path) as unknown as Promise<Response>;
+    const moved = await moveToLaptop(get, target, (line) => lines.push(line));
+    assert.equal(moved.objects, 1);
+    assert.equal(moved.tables["messages"], 1);
+    await assert.rejects(
+      moveToLaptop(get, target, () => {}),
+      /already exists/,
+    );
+
+    const local = await startMaster({
+      directory: target,
+      ownerKey: OWNER,
+      port: 0,
+      config: {
+        masterModel: "gpt-6.1-sol",
+        compactorModel: "gpt-6-luna",
+        compactorEffort: "high",
+        timezone: "Europe/Helsinki",
+      },
+      callModel: async () => modelReply("unused"),
+    });
+    try {
+      const owner = { headers: { authorization: `Bearer ${OWNER}` } };
+      const read = async <T>(path: string) =>
+        (await (await fetch(local.url + path, owner)).json()) as T;
+      assert.deepEqual(
+        (await read<{ text: string }[]>("/api/messages")).map((message) => message.text),
+        ["The owner keeps a lighthouse logbook"],
+      );
+      assert.equal((await read<unknown[]>("/api/search?q=lighthouse")).length, 1);
+      assert.deepEqual(await read("/api/instructions"), { text: "Be brief." });
+      assert.equal(
+        (await read<{ prompt: string }[]>("/api/schedules"))[0]?.prompt,
+        "Check the logbook.",
+      );
+      assert.match(
+        (await read<{ text: string }>("/api/transcript?session=moved-1&start=1&count=1")).text,
+        /from the cloud/,
+      );
+    } finally {
+      await local.close();
+    }
+  }));

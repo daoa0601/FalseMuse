@@ -22,3 +22,8 @@ allowBuilds:
   sharp: false
   "@google/genai": false
   protobufjs: false
+
+# Security floors (CVE audit 2026-10-24): zod GHSA-mrhx-c7xc-m3w5, sharp GHSA-wq5f-xc86-pv6w.
+overrides:
+  "zod@<4.6.6": "4.6.7"
+  "sharp@<0.35.5": "0.35.5"
