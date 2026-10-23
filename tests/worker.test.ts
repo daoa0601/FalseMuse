@@ -1291,6 +1291,8 @@ test("the Master moves to a local Master with its memory, settings, schedules an
     });
     assert.equal((await worker.fetch("/api/export/schema")).status, 401);
 
+    assert.deepEqual(await worker.json("/api/export/park", {}), { moved: true });
+    assert.equal((await worker.request("/api/status")).status, 410);
     const target = join(worker.directory, "local");
     const lines: string[] = [];
     // Miniflare's responses carry the same fields the move reads from fetch's.
@@ -1302,6 +1304,8 @@ test("the Master moves to a local Master with its memory, settings, schedules an
       moveToLaptop(get, target, () => {}),
       /already exists/,
     );
+    assert.deepEqual(await worker.json("/api/export/unpark", {}), { moved: false });
+    assert.equal((await worker.request("/api/status")).status, 200);
 
     const local = await startMaster({
       directory: target,

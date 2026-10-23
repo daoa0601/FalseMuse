@@ -61,10 +61,16 @@ export class Master extends DurableObject<Env> {
     // The Worker has already authenticated the owner for /api routes.
     if (url.pathname.startsWith("/api/export/")) {
       try {
-        return await this.export(url);
+        return await this.export(url, request.method);
       } catch (error) {
         return Response.json({ error: String(error) }, { status: 400 });
       }
+    }
+    if (await this.ctx.storage.get("moved")) {
+      return Response.json(
+        { error: "The Master has moved to the laptop; this copy only answers /api/export/" },
+        { status: 410 },
+      );
     }
     if (url.pathname !== "/node/ws") return this.master.fetch(request);
     const machine = this.master.nodeMachine(request);
@@ -85,9 +91,21 @@ export class Master extends DurableObject<Env> {
    * Hand the Master's state to the owner for its move to the laptop: each table's schema and rows
    * in rowid order, the owner's instructions, and the bucket's objects.
    */
-  private async export(url: URL): Promise<Response> {
+  private async export(url: URL, method: string): Promise<Response> {
     const sql = this.ctx.storage.sql;
     const query = url.searchParams;
+    // Park this copy before exporting, so it stops changing and stops acting for the owner.
+    if (url.pathname === "/api/export/park" && method === "POST") {
+      await this.ctx.storage.put("moved", true);
+      await this.ctx.storage.deleteAlarm();
+      for (const socket of this.ctx.getWebSockets()) socket.close(1001, "The Master has moved");
+      return Response.json({ moved: true });
+    }
+    if (url.pathname === "/api/export/unpark" && method === "POST") {
+      await this.ctx.storage.delete("moved");
+      await this.master.wake();
+      return Response.json({ moved: false });
+    }
     // Durable Object internals and SQLite's own tables stay; a full-text table's rows are exported
     // and its shadow tables rebuilt from them.
     const tables = sql
@@ -152,7 +170,8 @@ export class Master extends DurableObject<Env> {
     }
   }
 
-  override alarm(): Promise<void> {
+  override async alarm(): Promise<void> {
+    if (await this.ctx.storage.get("moved")) return;
     return this.master.alarm();
   }
 
@@ -161,7 +180,11 @@ export class Master extends DurableObject<Env> {
     return this.master.sandboxBusy();
   }
 
-  override webSocketMessage(socket: WebSocket, raw: string | ArrayBuffer): Promise<void> {
+  override async webSocketMessage(socket: WebSocket, raw: string | ArrayBuffer): Promise<void> {
+    if (await this.ctx.storage.get("moved")) {
+      socket.close(1001, "The Master has moved");
+      return;
+    }
     return this.master.webSocketMessage(socket, raw);
   }
 
