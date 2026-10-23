@@ -266,3 +266,31 @@ test("the local alarm waits past a timer's longest delay instead of firing early
   await later.stop();
   await clock.stop();
 });
+
+test("the local Master calls the model itself even when a node offers to relay", () =>
+  withMaster(async (master) => {
+    const { key } = await master.json<{ key: string }>("/api/nodes", {
+      name: "laptop",
+      roots: ["/tmp"],
+    });
+    await master.json("/api/nodes/laptop/models", { allowed: true });
+    const received: { type: string }[] = [];
+    const socket = new WebSocket(master.url.replace(/^http/, "ws") + "/node/ws", ["optchat", key]);
+    const ready = new Promise<void>((resolve) =>
+      socket.addEventListener("message", (event) => {
+        const message = JSON.parse(String(event.data)) as { type: string };
+        received.push(message);
+        if (message.type === "registered")
+          socket.send(JSON.stringify({ type: "node_ready", models: true }));
+        if (message.type === "ready") resolve();
+      }),
+    );
+    await ready;
+    const { id } = await master.json<{ id: number }>("/api/chat", { text: "Who answers?" });
+    assert.equal((await master.finished(id)).text, REPLY);
+    assert.deepEqual(
+      received.map((message) => message.type),
+      ["registered", "ready"],
+    );
+    socket.close();
+  }));
