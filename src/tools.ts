@@ -46,12 +46,12 @@ const MASTER_TOOLS = [
   ),
   tool(
     "computers",
-    "List the user's computers running T3 Code, whether each is signed in, and its projects.",
+    "List the user's computers running T3 Code, whether each is signed in, its projects, providers and models, and the threads still running for you there.",
     {},
   ),
   tool(
     "launch",
-    "Start a T3 Code thread in a project on a computer, with task as its first message. It runs with the access the user approved for you there, and asks the user in T3 Code before going beyond it. Its result comes back as a message starting [computer: title].",
+    "Start a T3 Code thread in a project on a computer, with task as its first message. It runs with the access the user approved for you there, and asks the user in T3 Code before going beyond it. Its result comes back as a message starting [computer: title]. At most six threads run for you at once.",
     { computer: string, project: string, title: string, task: string },
   ),
   tool("threads", "List the 20 newest T3 Code threads of a project on a computer.", {

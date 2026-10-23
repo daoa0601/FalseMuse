@@ -161,14 +161,18 @@ using codex gpt-6.1-sol, that reviews diffs for bugs". A helper has standing ins
 (a T3 Code provider instance and model, or the project's default), and one T3 Code thread titled
 `Helper: <name>` that keeps its context between jobs. Jobs you give it through OptChat queue in that
 thread and report back like any thread the Master starts; open the thread to talk to the helper
-directly. OptChat gives helpers jobs only when you ask, unless you hired one with `auto`.
-`GET /api/helpers` lists them.
+directly. OptChat may give a helper part of a task you asked for; it starts work you did not ask for
+only through a helper hired with `auto`. `GET /api/helpers` lists them.
 
 A model must be one the computer's T3 Code offers (OptChat's `computers` tool lists them), and
 changing it switches the helper's thread in place; going back to the project's default starts a new
 thread. "Give the reviewer a fresh start" also starts a new thread. A new thread, including one that
 replaces a thread you deleted, gets the helper's last eight jobs and results. Conversations you have
 in the thread yourself are not among them.
+
+OptChat splits a task whose parts can run on their own into threads and helper jobs, titled
+`<task>: <part>`, and reports once when the last part is in. At most six threads run for it at once
+(a thread counts for 12 hours from its start); it starts the rest as reports arrive.
 
 ## Live ingest
 
