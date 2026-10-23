@@ -29,12 +29,14 @@
   },
   "dependencies": {
     "@cloudflare/codemode": "0.5.3",
-    "@cloudflare/sandbox": "1.0.0"
+    "@cloudflare/sandbox": "1.0.0",
+    "ws": "8.22.0"
   },
   "devDependencies": {
     "@cloudflare/config": "0.23.0",
     "@earendil-works/pi-coding-agent": "1.0.2",
     "@types/node": "22.20.1",
+    "@types/ws": "8.18.1",
     "cf": "1.0.0-beta.12",
     "miniflare": "5.20261001.0-alpha",
     "oxlint": "1.74.0",
