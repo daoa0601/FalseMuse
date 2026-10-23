@@ -151,6 +151,17 @@ class NormalizationTests(unittest.TestCase):
         self.assertEqual([row["kind"] for row in rows], ["user", "talk"])
         self.assertEqual(rows[1]["text"], "Fixed the parser.\nThe public API test passes.")
 
+    def test_claude_records_written_again_later_keep_their_first_line(self):
+        def user(uuid, text):
+            return {"type": "user", "uuid": uuid, "sessionId": "main", "message": {"role": "user", "content": text}}
+        answer = {"type": "assistant", "uuid": "answer", "sessionId": "main", "message": {"role": "assistant", "id": "answer", "content": [{"type": "text", "text": "Fixed the parser."}]}}
+        # Claude Code can write a conversation's records again further down the file.
+        events = [user("question", "Fix it."), answer, user("next", "Now test it."), user("question", "Fix it."), answer]
+        self.session("claude", "main", events)
+        _, rows = self.run_export("claude")
+        self.assertEqual([row["text"] for row in rows], ["Fix it.", "Fixed the parser.", "Now test it."])
+        self.assertEqual([row["line"] for row in rows], [1, 2, 3])
+
     def test_claude_resume_record_does_not_merge_distinct_sessions(self):
         self.session("claude", "parent", [{"type": "user", "sessionId": "parent", "message": {"role": "user", "content": "Read the parser."}}])
         self.session("claude", "child", [{"type": "progress", "sessionId": "parent"}, {"type": "user", "sessionId": "child", "message": {"role": "user", "content": "Now fix the parser."}}], start="2026-02-01T00:00:00Z")

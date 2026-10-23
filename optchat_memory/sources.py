@@ -168,11 +168,18 @@ def scope_a(session: Session, transcript: Path) -> list[Message]:
         return codex_messages(session, transcript)
     messages: dict[str, tuple[int, Message]] = {}
     claude_replies: dict[str, dict] = {}
+    seen: set[str] = set()
     for order, wrapper in records(transcript):
         event = wrapper.get("event", {})
         line = wrapper["line"]
         timestamp = event.get("timestamp") or session.started_at
         if session.source == "claude":
+            # Claude Code can write records again further down the file; the first copy stands.
+            uuid = event.get("uuid")
+            if uuid in seen:
+                continue
+            if uuid:
+                seen.add(uuid)
             payload = event.get("message", {})
             if event.get("type") == "assistant":
                 reply_id = payload.get("id", f"line-{line}")
