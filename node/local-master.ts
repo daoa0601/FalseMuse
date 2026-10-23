@@ -13,6 +13,8 @@ import { DirectoryBucket } from "./bucket.ts";
 
 /** A relayed model request may carry 20 MiB of images; the cloud allowed 32 MiB messages. */
 const MAX_MESSAGE_BYTES = 32 * 1024 * 1024;
+/** setTimeout fires at once when asked to wait longer than this. */
+const MAX_TIMER_MS = 2_147_483_647;
 
 export interface LocalMasterOptions {
   /** Holds `master.sqlite` and the bucket's files. */
@@ -59,7 +61,69 @@ class LocalSocket implements NodeSocket {
   }
 }
 
-function toRequest(message: IncomingMessage): Request {
+/**
+ * One pending wake-up that calls `run` like a Durable Object alarm: never two runs at once, and
+ * one that falls due during a run starts after it. A wait longer than a timer allows re-arms.
+ */
+export class AlarmClock {
+  private time: number | null = null;
+  private timer: ReturnType<typeof setTimeout> | undefined;
+  private running: Promise<void> | null = null;
+  private due = false;
+  private stopped = false;
+  private readonly run: () => Promise<void>;
+  private readonly longest: number;
+
+  constructor(run: () => Promise<void>, longest = MAX_TIMER_MS) {
+    this.run = run;
+    this.longest = longest;
+  }
+
+  get(): number | null {
+    return this.time;
+  }
+
+  set(time: number): void {
+    clearTimeout(this.timer);
+    this.time = time;
+    this.arm(time);
+  }
+
+  async stop(): Promise<void> {
+    this.stopped = true;
+    clearTimeout(this.timer);
+    await this.running;
+  }
+
+  private arm(time: number): void {
+    const delay = Math.max(0, time - Date.now());
+    this.timer = setTimeout(
+      () => (delay > this.longest ? this.arm(time) : this.fire()),
+      Math.min(delay, this.longest),
+    );
+  }
+
+  private fire(): void {
+    this.time = null;
+    if (this.stopped) return;
+    if (this.running) {
+      this.due = true;
+      return;
+    }
+    this.running = this.run()
+      .catch((error: unknown) => console.error(errorMessage(error)))
+      .finally(() => {
+        this.running = null;
+        if (this.due) {
+          this.due = false;
+          this.fire();
+        }
+      });
+  }
+}
+
+/** The request, addressed to the Master's own origin whatever Host header the client sent. */
+function toRequest(message: IncomingMessage, origin: string): Request {
   const headers = new Headers();
   for (const [name, value] of Object.entries(message.headers)) {
     for (const item of Array.isArray(value) ? value : value === undefined ? [] : [value]) {
@@ -68,7 +132,8 @@ function toRequest(message: IncomingMessage): Request {
   }
   const method = message.method ?? "GET";
   const body = method === "GET" || method === "HEAD" ? {} : { body: Readable.toWeb(message) };
-  return new Request(`http://${message.headers.host ?? "127.0.0.1"}${message.url ?? "/"}`, {
+  const url = new URL(message.url ?? "/", origin);
+  return new Request(origin + url.pathname + url.search, {
     method,
     headers,
     ...body,
@@ -94,29 +159,7 @@ export async function startMaster(options: LocalMasterOptions): Promise<LocalMas
   const sql = openDatabase(join(options.directory, "master.sqlite"));
   sql.exec("CREATE TABLE IF NOT EXISTS host_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
 
-  let alarm: { time: number; timer: ReturnType<typeof setTimeout> } | null = null;
-  let running: Promise<void> | null = null;
-  let due = false;
-  let closed = false;
-  // Like a Durable Object alarm: one at a time, and one that falls due meanwhile runs after it.
-  const fire = (): void => {
-    alarm = null;
-    if (closed) return;
-    if (running) {
-      due = true;
-      return;
-    }
-    running = master
-      .alarm()
-      .catch((error: unknown) => console.error(errorMessage(error)))
-      .finally(() => {
-        running = null;
-        if (due) {
-          due = false;
-          fire();
-        }
-      });
-  };
+  const alarm = new AlarmClock(() => master.alarm());
   const storage: Settings = {
     async get<T>(key: string) {
       const [row] = sql.rows<{ value: string }>("SELECT value FROM host_settings WHERE key=?", key);
@@ -134,11 +177,10 @@ export async function startMaster(options: LocalMasterOptions): Promise<LocalMas
       sql.exec("DELETE FROM host_settings WHERE key=?", key);
     },
     async getAlarm() {
-      return alarm?.time ?? null;
+      return alarm.get();
     },
     async setAlarm(time) {
-      if (alarm) clearTimeout(alarm.timer);
-      alarm = { time, timer: setTimeout(fire, Math.max(0, time - Date.now())) };
+      alarm.set(time);
     },
   };
 
@@ -164,8 +206,16 @@ export async function startMaster(options: LocalMasterOptions): Promise<LocalMas
     maxPayload: MAX_MESSAGE_BYTES,
     handleProtocols: (protocols) => (protocols.has("optchat") ? "optchat" : false),
   });
+  let origin = "";
   const server = createServer((message, output) => {
-    serve(toRequest(message), options.ownerKey, master)
+    let request: Request;
+    try {
+      request = toRequest(message, origin);
+    } catch {
+      output.writeHead(400).end();
+      return;
+    }
+    serve(request, options.ownerKey, master)
       .catch((error: unknown) => Response.json({ error: errorMessage(error) }, { status: 500 }))
       .then((response) => respond(response, output))
       .catch((error: unknown) => {
@@ -174,7 +224,13 @@ export async function startMaster(options: LocalMasterOptions): Promise<LocalMas
       });
   });
   server.on("upgrade", (message: IncomingMessage, stream, head: Buffer) => {
-    const request = toRequest(message);
+    let request: Request;
+    try {
+      request = toRequest(message, origin);
+    } catch {
+      stream.destroy();
+      return;
+    }
     const machine =
       new URL(request.url).pathname === "/node/ws"
         ? master.nodeMachine(request)
@@ -206,19 +262,19 @@ export async function startMaster(options: LocalMasterOptions): Promise<LocalMas
   await once(server, "listening");
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("The Master has no TCP port");
+  origin = `http://127.0.0.1:${address.port}`;
   // A restart resumes pending turns, schedules and the compactor at once.
   await storage.setAlarm(Date.now());
 
   return {
-    url: `http://127.0.0.1:${address.port}`,
+    url: origin,
     async close() {
-      closed = true;
-      if (alarm) clearTimeout(alarm.timer);
+      const stopped = alarm.stop();
       for (const socket of sockets.keys()) socket.close(1001, "The Master is stopping");
       nodes.close();
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
-      await running;
+      await stopped;
       sql.close();
     },
   };

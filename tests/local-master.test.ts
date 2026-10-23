@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { startMaster, type LocalMaster } from "../node/local-master.ts";
+import { request as httpRequest } from "node:http";
+import { once } from "node:events";
+import { AlarmClock, startMaster, type LocalMaster } from "../node/local-master.ts";
 import { runCode } from "../node/code-runner.ts";
 import type { ModelResult, RelayedRequest } from "../src/codex.ts";
 import { modelReply } from "./support.ts";
@@ -102,6 +104,12 @@ test("the local Master answers the owner with its own model login and keeps the 
   withMaster(async (master) => {
     assert.equal((await master.fetch("/api/status")).status, 401);
     assert.equal((await master.fetch("/")).status, 200);
+    // A Host header that is no URL is ignored; the Master answers for its own origin.
+    const odd = httpRequest(master.url + "/api/status", { headers: { host: "[not a host" } });
+    odd.end();
+    const [answer] = (await once(odd, "response")) as [{ statusCode: number; resume(): void }];
+    answer.resume();
+    assert.equal(answer.statusCode, 401);
     const chat = await master.request("/api/chat", { text: "Hello from the test" });
     assert.equal(chat.status, 202);
     const { id } = await read<{ id: number }>(chat);
@@ -236,3 +244,25 @@ test("a chat turn runs Code Mode in the local runner and replies", () =>
       result: ["laptop"],
     });
   }));
+
+test("the local alarm waits past a timer's longest delay instead of firing early", async () => {
+  let runs = 0;
+  const clock = new AlarmClock(async () => {
+    runs++;
+  }, 40);
+  clock.set(Date.now() + 120);
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert.equal(runs, 0);
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  assert.equal(runs, 1);
+  assert.equal(clock.get(), null);
+
+  const later = new AlarmClock(async () => {
+    runs++;
+  });
+  later.set(Date.now() + 30 * 24 * 3_600_000);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(runs, 1);
+  await later.stop();
+  await clock.stop();
+});

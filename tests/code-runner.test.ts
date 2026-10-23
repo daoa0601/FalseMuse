@@ -47,3 +47,11 @@ test("a Code Mode script is stopped at its time limit, and unknown tools fail", 
   const unknown = await runCode("async () => codemode.codemode({})", async () => null);
   assert.match(unknown.error ?? "", /codemode\.codemode is not a function/);
 });
+
+test("a Code Mode script that floods its output is stopped", async () => {
+  const flood = await runCode(
+    `async () => { process.stdout.write("x".repeat(40 * 1024 * 1024)); await new Promise(() => {}); }`,
+    async () => null,
+  );
+  assert.deepEqual(flood, { result: undefined, error: "The script wrote more than 32 MiB" });
+});
