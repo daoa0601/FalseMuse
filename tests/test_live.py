@@ -160,5 +160,27 @@ class LiveIngestTests(unittest.TestCase):
         self.assertEqual([m["kind"] for m in finished], ["user", "talk"])
 
 
+    def test_claude_reply_completes_at_its_stop_hook_summary(self):
+        # Claude Code 2.1.286 and later point last-prompt elsewhere and close a turn this way.
+        path = self.home / ROOTS["claude"] / "project" / "claude-session.jsonl"
+        path.parent.mkdir(parents=True)
+        rows = [
+            {"type": "user", "uuid": "user", "message": {"role": "user", "content": "Explain the view."}},
+            {"type": "assistant", "uuid": "reply", "parentUuid": "user", "message": {"id": "model-reply", "role": "assistant", "stop_reason": "end_turn", "content": [{"type": "text", "text": "The view contains summaries."}]}},
+            {"type": "last-prompt", "leafUuid": "user"},
+        ]
+        path.write_text("".join(json.dumps({"timestamp": "2026-10-01T10:00:00Z", **r}) + "\n" for r in rows))
+        session = identify("claude", path.parent.parent, path)
+        with redirect_stdout(io.StringIO()):
+            _, pending, _ = prepare(session, self.root / "pending", self.root / "pending.jsonl", 0)
+        self.assertEqual(pending, [])
+        with path.open("a") as handle:
+            handle.write(json.dumps({"type": "system", "subtype": "stop_hook_summary", "uuid": "stop", "parentUuid": "reply"}) + "\n")
+        session = identify("claude", path.parent.parent, path)
+        with redirect_stdout(io.StringIO()):
+            boundary, finished, _ = prepare(session, self.root / "finished", self.root / "finished.jsonl", 0)
+        self.assertEqual(boundary, 4)
+        self.assertEqual([m["kind"] for m in finished], ["user", "talk"])
+
 if __name__ == "__main__":
     unittest.main()

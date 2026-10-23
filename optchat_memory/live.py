@@ -36,7 +36,11 @@ def completed_line(source: str, events) -> int:
         elif source == "claude":
             if event.get("type") == "assistant" and event.get("uuid") and message.get("stop_reason") == "end_turn" and text_blocks(message.get("content")):
                 claude_finals.add(event.get("uuid"))
+            # Older Claude Code names the final reply in last-prompt; 2.1.286 and later follow it
+            # with a stop_hook_summary record instead.
             if event.get("type") == "last-prompt" and event.get("leafUuid") in claude_finals:
+                boundary = line
+            if event.get("type") == "system" and event.get("subtype") == "stop_hook_summary" and event.get("parentUuid") in claude_finals:
                 boundary = line
         elif event.get("type") == "message" and message.get("role") == "assistant" and message.get("stopReason") == "stop":
             boundary = line
