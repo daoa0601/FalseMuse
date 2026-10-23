@@ -14,6 +14,8 @@ export default {
 /** The Master on Cloudflare: one Durable Object holds its SQLite, alarm and node sockets. */
 export class Master extends DurableObject<Env> {
   private readonly master: core.Master;
+  /** Parked for the move to the laptop; kept in memory so no event waits on storage to check it. */
+  private moved = false;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -26,6 +28,9 @@ export class Master extends DurableObject<Env> {
       },
       transaction: (action) => ctx.storage.transactionSync(action),
     };
+    void ctx.blockConcurrencyWhile(async () => {
+      this.moved = Boolean(await ctx.storage.get("moved"));
+    });
     const sandbox = () => ctx.exports.Sandbox.getByName("owner");
     this.master = new core.Master({
       sql,
@@ -66,7 +71,7 @@ export class Master extends DurableObject<Env> {
         return Response.json({ error: String(error) }, { status: 400 });
       }
     }
-    if (await this.ctx.storage.get("moved")) {
+    if (this.moved) {
       return Response.json(
         { error: "The Master has moved to the laptop; this copy only answers /api/export/" },
         { status: 410 },
@@ -97,12 +102,14 @@ export class Master extends DurableObject<Env> {
     // Park this copy before exporting, so it stops changing and stops acting for the owner.
     if (url.pathname === "/api/export/park" && method === "POST") {
       await this.ctx.storage.put("moved", true);
+      this.moved = true;
       await this.ctx.storage.deleteAlarm();
       for (const socket of this.ctx.getWebSockets()) socket.close(1001, "The Master has moved");
       return Response.json({ moved: true });
     }
     if (url.pathname === "/api/export/unpark" && method === "POST") {
       await this.ctx.storage.delete("moved");
+      this.moved = false;
       await this.master.wake();
       return Response.json({ moved: false });
     }
@@ -161,8 +168,15 @@ export class Master extends DurableObject<Env> {
           requireString(query.get("key"), "Name a key"),
         );
         if (!object) return Response.json({ error: "No such object" }, { status: 404 });
+        // Transcripts hold untrusted text: a browser must download them, never render them.
         return new Response(object.body, {
-          headers: { "content-length": String(object.size) },
+          headers: {
+            "content-length": String(object.size),
+            "content-type": "application/octet-stream",
+            "content-disposition": "attachment",
+            "x-content-type-options": "nosniff",
+            "content-security-policy": "sandbox; default-src 'none'",
+          },
         });
       }
       default:
@@ -170,8 +184,8 @@ export class Master extends DurableObject<Env> {
     }
   }
 
-  override async alarm(): Promise<void> {
-    if (await this.ctx.storage.get("moved")) return;
+  override alarm(): Promise<void> {
+    if (this.moved) return Promise.resolve();
     return this.master.alarm();
   }
 
@@ -180,10 +194,10 @@ export class Master extends DurableObject<Env> {
     return this.master.sandboxBusy();
   }
 
-  override async webSocketMessage(socket: WebSocket, raw: string | ArrayBuffer): Promise<void> {
-    if (await this.ctx.storage.get("moved")) {
+  override webSocketMessage(socket: WebSocket, raw: string | ArrayBuffer): Promise<void> {
+    if (this.moved) {
       socket.close(1001, "The Master has moved");
-      return;
+      return Promise.resolve();
     }
     return this.master.webSocketMessage(socket, raw);
   }
