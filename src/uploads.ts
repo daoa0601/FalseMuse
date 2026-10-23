@@ -1,4 +1,5 @@
 import type { SqlDatabase } from "./database.ts";
+import type { Bucket, StoredObject, UploadedPart } from "./host.ts";
 
 export type UploadState =
   { complete: true; size: number } | { complete: false; parts: number; accepted: number[] };
@@ -16,13 +17,13 @@ export function transcriptKey(session: unknown): string {
   return `sessions/${session}.jsonl`;
 }
 
-// The owner uploads prepared, immutable transcripts. R2 holds the bytes; SQLite
+// The owner uploads prepared, immutable transcripts. The bucket holds the bytes; SQLite
 // remembers accepted parts so a restarted client does not repeat completed work.
 export class TranscriptUploads {
   private readonly database: SqlDatabase;
-  private readonly bucket: R2Bucket;
+  private readonly bucket: Bucket;
 
-  constructor(database: SqlDatabase, bucket: R2Bucket) {
+  constructor(database: SqlDatabase, bucket: Bucket) {
     this.database = database;
     this.bucket = bucket;
     database.exec(
@@ -90,10 +91,10 @@ export class TranscriptUploads {
 
   async finish(session: string): Promise<UploadState> {
     const key = transcriptKey(session);
-    let object: R2Object | null = await this.bucket.head(key);
+    let object: StoredObject | null = await this.bucket.head(key);
     if (!object) {
       const upload = this.upload(session);
-      const parts = this.database.rows<R2UploadedPart>(
+      const parts = this.database.rows<UploadedPart>(
         "SELECT number AS partNumber, etag FROM transcript_parts WHERE session=? ORDER BY number",
         session,
       );

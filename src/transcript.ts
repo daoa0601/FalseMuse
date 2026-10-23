@@ -1,8 +1,9 @@
 import { cap } from "./tools.ts";
+import type { Bucket } from "./host.ts";
 
 /** Read source lines [start, start+count) of a stored transcript, bounding each line while streaming. */
 export async function readTranscript(
-  bucket: R2Bucket,
+  bucket: Bucket,
   session: string,
   start: number,
   count: number,
@@ -51,7 +52,7 @@ export async function readTranscript(
     length = 0;
   }
 
-  // Bound each line while streaming: a large tool event must not fill DO memory.
+  // Bound each line while streaming: a large tool event must not fill the Master's memory.
   for await (const chunk of object.body) {
     const fragments = decoder.decode(chunk, { stream: true }).split("\n");
     for (let index = 0; index < fragments.length; index++) {

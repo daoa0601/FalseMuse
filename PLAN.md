@@ -26,7 +26,7 @@ for backup and an inbox; see
 | 5. More nodes                         | Sandbox fallback deployed; home server not set up; live ingest on since 2026-10-11, following hand-run sessions from the import's end                                                                                                                                                                                     |
 | 6. Muse behaviour                     | Scheduled prompts and Code Mode deployed; Telegram/Discord and gated self-redeploy not started                                                                                                                                                                                                                            |
 
-**Next:** L1 of the local Master (below).
+**Next:** L2 of the local Master (below).
 
 ## Direction: a chief of staff over t3code (decided 2026-10-10)
 

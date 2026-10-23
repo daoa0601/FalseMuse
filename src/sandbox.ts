@@ -10,17 +10,7 @@ import {
   type OAuthCredential,
 } from "./oauth.ts";
 import type { DaemonStatus } from "./protocol.ts";
-
-/** The node configuration written into the container for its daemon. */
-export interface SandboxNodeConfig {
-  name: string;
-  key: string;
-  roots: string[];
-  tools: string[];
-  url: string;
-  directory: string;
-  subscription: "cloud";
-}
+import type { SandboxNodeConfig } from "./host.ts";
 
 const DAEMON_STATES = ["missing", "stopped", "starting", "running", "stopping"] as const;
 

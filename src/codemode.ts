@@ -1,7 +1,6 @@
 import { DynamicWorkerExecutor } from "@cloudflare/codemode";
 import { CODE_TOOLS } from "./tools.ts";
-
-export type CodeInvoke = (name: string, input: unknown, step: number) => Promise<unknown>;
+import type { CodeInvoke } from "./host.ts";
 
 export async function executeCode(loader: WorkerLoader, code: string, invoke: CodeInvoke) {
   let step = 0;

@@ -1,5 +1,6 @@
 import { isRecord } from "./json.ts";
 import type { InputImage, InputItem } from "./codex.ts";
+import type { Bucket } from "./host.ts";
 
 const EXTENSIONS: Record<string, string> = {
   "image/png": "png",
@@ -30,11 +31,11 @@ function toBase64(bytes: Uint8Array): string {
 }
 
 /**
- * Store the images of an owner's message in R2 under their content hashes, and return the markers
+ * Store the images of an owner's message in the bucket under their content hashes, and return the markers
  * that name them in the message's text. Images are `{mimeType, data}` with base64 data, as ACP
  * sends them.
  */
-export async function saveImages(bucket: R2Bucket, value: unknown): Promise<string[]> {
+export async function saveImages(bucket: Bucket, value: unknown): Promise<string[]> {
   if (value === undefined) return [];
   if (!Array.isArray(value) || value.length > MESSAGE_IMAGES) {
     throw new Error(`Send at most ${MESSAGE_IMAGES} images as a list`);
@@ -79,8 +80,8 @@ export const storedImage = (key: string): InputImage => ({
 export const markedImages = (text: string): InputImage[] =>
   [...text.matchAll(MARKER)].flatMap((match) => (match[1] ? [storedImage(match[1])] : []));
 
-/** The input with each stored image loaded from R2 as a data URL, for one model call. */
-export async function loadImages(bucket: R2Bucket, input: InputItem[]): Promise<InputItem[]> {
+/** The input with each stored image loaded from the bucket as a data URL, for one model call. */
+export async function loadImages(bucket: Bucket, input: InputItem[]): Promise<InputItem[]> {
   const loaded = new Map<string, Promise<string>>();
   const load = (key: string) => {
     let url = loaded.get(key);
