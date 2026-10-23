@@ -1,4 +1,4 @@
-import type { SqlDatabase } from "./database.ts";
+import { hasColumn, type SqlDatabase } from "./database.ts";
 import { errorMessage, isRecord, parseJson } from "./json.ts";
 import { callTool, McpUnauthorized } from "./mcp.ts";
 import { redactText } from "./redact.ts";
@@ -21,6 +21,12 @@ const REPORT_CHARS = 4_000;
 const OPTCHAT_MODEL: ModelSelection = { instanceId: "optchat", model: "default" };
 /** Tries to post a turn, a minute apart and doubling, before it is left unsent. */
 const POST_ATTEMPTS = 5;
+/**
+ * Threads that may run for the Master at once, so fanning out cannot run away. A thread counts for
+ * 12 hours from its last start, so one deleted in T3 Code does not hold its place for good.
+ */
+const MAX_RUNNING = 6;
+const RUNNING_MS = 12 * 3_600_000;
 
 /** The computer's sign-in is missing, expired or refused: only the owner can renew it. */
 export class SignInNeeded extends Error {
@@ -65,6 +71,8 @@ interface Watch {
   waiting: number;
   /** Raised each time the Master starts the thread again, so a stale poll leaves the watch. */
   generation: number;
+  /** When the Master last started it. */
+  since: number;
 }
 
 interface Post {
@@ -115,7 +123,7 @@ export class Computers {
     for (const query of [
       "CREATE TABLE IF NOT EXISTS t3_computers (name TEXT PRIMARY KEY, url TEXT NOT NULL, token TEXT, expires INTEGER, session TEXT)",
       "CREATE TABLE IF NOT EXISTS t3_flows (state TEXT PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL, issuer TEXT NOT NULL, client_id TEXT NOT NULL, verifier TEXT NOT NULL, redirect TEXT NOT NULL, token_endpoint TEXT NOT NULL, created INTEGER NOT NULL)",
-      "CREATE TABLE IF NOT EXISTS t3_watches (computer TEXT NOT NULL, thread TEXT NOT NULL, title TEXT NOT NULL, waiting INTEGER NOT NULL DEFAULT 0, generation INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(computer, thread))",
+      "CREATE TABLE IF NOT EXISTS t3_watches (computer TEXT NOT NULL, thread TEXT NOT NULL, title TEXT NOT NULL, waiting INTEGER NOT NULL DEFAULT 0, generation INTEGER NOT NULL DEFAULT 0, since INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(computer, thread))",
       // Launches by tool call id: T3 Code takes no retry key for them, so a resumed turn must not
       // repeat one. A null result is a launch that may have started before a restart.
       "CREATE TABLE IF NOT EXISTS t3_launches (id TEXT PRIMARY KEY, result TEXT)",
@@ -125,6 +133,10 @@ export class Computers {
       "CREATE TABLE IF NOT EXISTS t3_inboxes (computer TEXT PRIMARY KEY, thread TEXT NOT NULL)",
     ])
       database.exec(query);
+    if (!hasColumn(database, "t3_watches", "since")) {
+      database.exec("ALTER TABLE t3_watches ADD COLUMN since INTEGER NOT NULL DEFAULT 0");
+      database.exec("UPDATE t3_watches SET since=?", Date.now());
+    }
   }
 
   /** Begin signing in to a computer's MCP endpoint; the owner opens the returned page. */
@@ -322,10 +334,20 @@ export class Computers {
     return match.id;
   }
 
-  /** Every computer, and the projects, providers and models of those signed in. */
+  /**
+   * Every computer with the threads running for the Master on it, oldest first, and the projects,
+   * providers and models of those signed in.
+   */
   async overview() {
+    const watches = this.database.rows<Pick<Watch, "computer" | "thread" | "title" | "waiting">>(
+      "SELECT computer, thread, title, waiting FROM t3_watches ORDER BY since",
+    );
     return Promise.all(
-      this.list().map(async (computer) => {
+      this.list().map(async (entry) => {
+        const running = watches
+          .filter((watch) => watch.computer === entry.name)
+          .map(({ thread, title, waiting }) => ({ thread, title, waiting: waiting === 1 }));
+        const computer = { ...entry, running };
         if (!computer.connected) return { ...computer, projects: [] };
         try {
           const [projects, providers] = await Promise.all([
@@ -370,7 +392,8 @@ export class Computers {
   /**
    * Start a thread in a project; it runs within the access the owner approved, never above.
    * `request` is the tool call's id: a resumed turn gets the first result instead of a second
-   * thread. Without a model, the thread uses the project's default in T3 Code.
+   * thread. Without a model, the thread uses the project's default in T3 Code. At most
+   * MAX_RUNNING threads run for the Master at once.
    */
   async launch(
     name: string,
@@ -379,6 +402,7 @@ export class Computers {
     task: string,
     request: string,
     modelSelection?: ModelSelection,
+    now = Date.now(),
   ) {
     const [earlier] = this.database.rows<{ result: string | null }>(
       "SELECT result FROM t3_launches WHERE id=?",
@@ -388,6 +412,15 @@ export class Computers {
     if (earlier) {
       throw new Error(
         "This launch may have started before the Master restarted; check threads before launching again",
+      );
+    }
+    const running = this.database.rows<{ title: string }>(
+      "SELECT title FROM t3_watches WHERE since>? ORDER BY since",
+      now - RUNNING_MS,
+    );
+    if (running.length >= MAX_RUNNING) {
+      throw new Error(
+        `${running.length} threads are running for you (${running.map((watch) => watch.title).join(", ")}); wait for a report before starting another`,
       );
     }
     const projectId = await this.project(name, project);
@@ -411,7 +444,7 @@ export class Computers {
         JSON.stringify(result),
         request,
       );
-      this.watch(name, thread, title);
+      this.watch(name, thread, title, now);
     });
     return result;
   }
@@ -619,13 +652,14 @@ export class Computers {
     return thread;
   }
 
-  private watch(computer: string, thread: string, title: string): void {
+  private watch(computer: string, thread: string, title: string, now = Date.now()): void {
     this.database.exec(
-      `INSERT INTO t3_watches VALUES (?, ?, ?, 0, 0) ON CONFLICT(computer, thread) DO UPDATE SET
-        waiting=0, generation=generation+1`,
+      `INSERT INTO t3_watches(computer, thread, title, since) VALUES (?, ?, ?, ?)
+        ON CONFLICT(computer, thread) DO UPDATE SET waiting=0, generation=generation+1, since=excluded.since`,
       computer,
       thread,
       title,
+      now,
     );
   }
 

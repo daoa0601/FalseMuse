@@ -127,6 +127,89 @@ test("a watched thread reports waiting once, then its last reply, and a revoked 
   }
 });
 
+test("at most six threads run for the Master at once, and a thread silent for 12 hours stops counting", async () => {
+  let status = "running";
+  let launches = 0;
+  const server = createServer((request, response) => {
+    let body = "";
+    request.on("data", (chunk: Buffer) => (body += chunk.toString()));
+    request.on("end", () => {
+      const message = JSON.parse(body) as {
+        id?: string;
+        method: string;
+        params?: { name: string };
+      };
+      const reply = (result: unknown, headers: Record<string, string> = {}) =>
+        response
+          .writeHead(200, { "content-type": "application/json", ...headers })
+          .end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result }));
+      if (message.method === "initialize") {
+        reply({}, { "mcp-session-id": "s1" });
+        return;
+      }
+      if (message.method.startsWith("notifications/")) {
+        response.writeHead(202).end();
+        return;
+      }
+      const name = message.params?.name;
+      const structured =
+        name === "t3_thread_launch"
+          ? { threadId: `th${++launches}`, projectId: "p1", runId: "r1", status: "starting" }
+          : name === "t3_project_list"
+            ? { projects: [{ id: "p1", title: "optchat", workspaceRoot: "/w" }], nextCursor: null }
+            : {
+                thread: { title: "Part", status, pendingRequestCount: 0 },
+                items: [{ position: 1, type: "assistant_message", text: "Done." }],
+                nextPosition: 1,
+                hasMore: false,
+              };
+      reply({ structuredContent: structured, content: [] });
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`;
+  const database = openDatabase(":memory:");
+  try {
+    const computers = new Computers(database);
+    database.exec("INSERT INTO t3_computers VALUES ('laptop', ?, 'token', NULL, NULL)", url);
+    const start = Date.now();
+    const launch = (part: number, now = start) =>
+      computers.launch(
+        "laptop",
+        "optchat",
+        `Audit: part ${part}`,
+        "Look.",
+        `call-${part}`,
+        undefined,
+        now,
+      );
+    for (let part = 1; part <= 6; part++) await launch(part);
+    await assert.rejects(
+      launch(7),
+      /6 threads are running for you \(Audit: part 1, .*Audit: part 6\); wait for a report before starting another/,
+    );
+    assert.equal(launches, 6);
+    // The Master sees which of its threads are still running.
+    const [laptop] = await computers.overview();
+    assert.deepEqual(
+      laptop?.running.map(({ title, waiting }) => [title, waiting]),
+      [1, 2, 3, 4, 5, 6].map((part) => [`Audit: part ${part}`, false]),
+    );
+    // A refused launch can be tried again under the same call id once a place is free.
+    await launch(7, start + 12 * 3_600_000 + 1);
+    assert.equal(launches, 7);
+
+    // Finished threads free their places at once.
+    status = "completed";
+    await computers.poll(() => {});
+    await launch(8);
+    assert.equal(launches, 8);
+  } finally {
+    database.close();
+    server.close();
+  }
+});
+
 test("turns nobody prompted for go to one unwatched OptChat inbox, later if no computer takes them", async () => {
   let accepting = false;
   let inboxGone = false;
