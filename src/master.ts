@@ -936,10 +936,11 @@ export class Master {
       cacheKey: "optchat",
     };
     const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(180_000)]);
-    const node = this.relay.node();
+    // A host with its own login calls the model itself; a relay is for hosts the backend refuses.
+    const node = this.host.callModel ? undefined : this.relay.node();
     let result: ModelResult;
-    if (node) result = await this.relay.call(node.socket, relayed, signal);
-    else if (this.host.callModel) result = await this.host.callModel({ ...relayed, signal });
+    if (this.host.callModel) result = await this.host.callModel({ ...relayed, signal });
+    else if (node) result = await this.relay.call(node.socket, relayed, signal);
     else result = await codexCall(await this.credentials(), { ...relayed, signal });
     this.usage.record({
       date: new Date().toISOString(),

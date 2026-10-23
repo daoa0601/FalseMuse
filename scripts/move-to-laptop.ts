@@ -143,6 +143,9 @@ export async function moveToLaptop(
 
 if (import.meta.filename === resolve(process.argv[1] ?? "")) {
   const { cloudClient } = await import("./cloud-client.ts");
-  const moved = await moveToLaptop(cloudClient().get, resolve(process.argv[2] ?? "data/master"));
+  const client = cloudClient();
+  // The cloud copy stops acting first, so nothing it does after the export is lost.
+  await client.request("/api/export/park", {});
+  const moved = await moveToLaptop(client.get, resolve(process.argv[2] ?? "data/master"));
   console.log(`Moved ${Object.keys(moved.tables).length} tables and ${moved.objects} objects.`);
 }

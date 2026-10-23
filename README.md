@@ -102,8 +102,21 @@ Runs the Master on this computer at `http://127.0.0.1:8790`, with its database a
 `data/master/` and the same owner key as the cloud. It makes model calls with this computer's Codex
 or Pi login, and runs Code Mode scripts in a child Node process that Node's permission model keeps
 from files, network and other processes. An optional `data/master.json` sets `port`, `directory`,
-`masterModel`, `compactorModel`, `compactorEffort` and `timezone`. It starts empty until the cloud
-Master's data is moved (PLAN.md, L3).
+`masterModel`, `compactorModel`, `compactorEffort` and `timezone`.
+
+To move the cloud Master here, put Cloudflare Access's service token for the Worker in
+`data/access-token.json` (`client_id`, `client_secret`), then:
+
+```bash
+node scripts/move-to-laptop.ts
+node scripts/install-master-service.ts
+```
+
+The move parks the cloud copy (`/api/export/park`: it stops acting and answers only the export) and
+copies its tables, instructions and transcripts into `data/master/`, resuming downloads if run
+again. The service runs the Master under launchd as `com.anhdao.optchat-master`, logging to
+`data/master.log`. Then set `url` to `http://127.0.0.1:8790` in `data/cloud.json`, which the CLI and
+the ACP agent use, and in the node configuration, and restart the node daemon.
 
 ## Nodes
 

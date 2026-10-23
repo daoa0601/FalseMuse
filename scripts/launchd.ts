@@ -1,0 +1,54 @@
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { resolve, join } from "node:path";
+import { execFileSync } from "node:child_process";
+
+/**
+ * Install a KeepAlive launchd agent that runs a script of this repository with Node, from the
+ * repository root, logging to data/<log>.log and data/<log>-error.log.
+ */
+export function installService(label: string, script: string, args: string[], log: string): void {
+  if (process.platform !== "darwin") {
+    throw new Error("This installer is for the laptop's macOS launchd service");
+  }
+  const directory = join(homedir(), "Library/LaunchAgents");
+  const file = join(directory, `${label}.plist`);
+  const suffix = label.slice(label.lastIndexOf("."));
+  // Any label with the same last part counts, including earlier ones: two KeepAlive copies would fight.
+  const existing = existsSync(directory)
+    ? readdirSync(directory).find((name) => name.endsWith(`${suffix}.plist`))
+    : undefined;
+  if (existing) {
+    throw new Error(
+      `A service already exists at ${join(directory, existing)}; preserve it and inspect it before replacing it`,
+    );
+  }
+  mkdirSync(directory, { recursive: true });
+  const escape = (value: string) =>
+    value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  const root = resolve(".");
+  const out = join(root, `data/${log}.log`);
+  const err = join(root, `data/${log}-error.log`);
+  for (const path of [out, err]) writeFileSync(path, "", { mode: 0o600 });
+  const program = [process.execPath, join(root, script), ...args]
+    .map((argument) => `<string>${escape(argument)}</string>`)
+    .join("");
+  writeFileSync(
+    file,
+    `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>${label}</string>
+<key>ProgramArguments</key><array>${program}</array>
+<key>WorkingDirectory</key><string>${escape(root)}</string>
+<key>EnvironmentVariables</key><dict><key>PATH</key><string>${escape(process.env["PATH"] ?? "")}</string></dict>
+<key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
+<key>StandardOutPath</key><string>${escape(out)}</string>
+<key>StandardErrorPath</key><string>${escape(err)}</string>
+</dict></plist>`,
+    { mode: 0o600 },
+  );
+  if (!process.getuid) throw new Error("launchd needs the current user ID");
+  execFileSync("launchctl", ["bootstrap", `gui/${process.getuid()}`, file]);
+  console.log(`Installed ${label}. Logs: ${out}`);
+}
