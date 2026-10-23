@@ -18,6 +18,19 @@ export interface CodeResult {
  */
 const RUNNER = `
 import { createInterface } from "node:readline";
+const allowed = (scope) => {
+  try {
+    return process.permission.has(scope);
+  } catch {
+    return true;
+  }
+};
+if (!process.permission || ["fs.read", "fs.write", "net", "child", "worker"].some(allowed)) {
+  process.stdout.write(
+    JSON.stringify({ type: "done", error: "Code Mode needs a Node whose permission model denies network access" }) + "\\n",
+  );
+  process.exit(1);
+}
 delete process._kill;
 process.kill = undefined;
 // macOS adds a variable even to an empty environment.
@@ -61,6 +74,9 @@ try {
 process.exit(0);
 `;
 
+/** What a script may write to its parent, tool calls and logs included. */
+const OUTPUT_BYTES = 32 * 1024 * 1024;
+
 /**
  * Run a Code Mode script, an async arrow function, in a locked-down Node process. Its tool calls
  * reach `invoke` in the order it makes them, numbered from 0.
@@ -88,6 +104,13 @@ export function runCode(code: string, invoke: CodeInvoke, timeout = 20_000): Pro
     const reply = (message: unknown) => {
       if (child.stdin.writable) child.stdin.write(JSON.stringify(message) + "\n");
     };
+    let written = 0;
+    child.stdout.on("data", (chunk: Buffer) => {
+      written += chunk.length;
+      if (written > OUTPUT_BYTES) {
+        finish({ result: undefined, error: "The script wrote more than 32 MiB" });
+      }
+    });
     createInterface({ input: child.stdout }).on("line", (line) => {
       let message: unknown;
       try {
