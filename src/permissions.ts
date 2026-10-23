@@ -1,4 +1,5 @@
 import type { SqlDatabase } from "./database.ts";
+import type { NodeSocket } from "./host.ts";
 import { send, type Nodes } from "./nodes.ts";
 import type { Job, PermissionRequest } from "./protocol.ts";
 
@@ -66,11 +67,11 @@ export class Permissions {
     }
     const result = this.require(job, id);
     const { machine } = this.running(job);
-    for (const socket of this.nodes.ctx.getWebSockets(machine)) this.deliver(socket, result);
+    for (const socket of this.nodes.sockets.getWebSockets(machine)) this.deliver(socket, result);
     return { allowed: Boolean(result.allowed), state: result.state };
   }
 
-  reconnect(machine: string, socket: WebSocket): void {
+  reconnect(machine: string, socket: NodeSocket): void {
     const decided = this.database.rows<Permission>(
       "SELECT p.* FROM permissions p JOIN spawns s ON s.id=p.job WHERE s.machine=? AND s.status='running' AND p.state='decided'",
       machine,
@@ -95,7 +96,7 @@ export class Permissions {
     );
   }
 
-  deliver(socket: WebSocket, permission: Permission): void {
+  deliver(socket: NodeSocket, permission: Permission): void {
     if (permission.state !== "decided") return;
     send(socket, {
       type: "permission",

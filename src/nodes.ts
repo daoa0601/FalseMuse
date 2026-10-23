@@ -1,6 +1,7 @@
 import { hasColumn, type SqlDatabase } from "./database.ts";
 import { isRecord, parseJson } from "./json.ts";
 import type { CloudMessage, Job, ReportMessage } from "./protocol.ts";
+import type { Bucket, MasterHost, NodeSocket } from "./host.ts";
 
 export const PI_TOOLS = ["read", "bash", "edit", "write"] as const;
 
@@ -32,18 +33,18 @@ export interface Registration {
 const stringList = (value: unknown): string[] =>
   Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 
-export function send(socket: WebSocket, message: CloudMessage): void {
+export function send(socket: NodeSocket, message: CloudMessage): void {
   socket.send(JSON.stringify(message));
 }
 
 /** Registered machines, their WebSocket connections, and the Pi tasks proposed to them. */
 export class Nodes {
-  readonly ctx: DurableObjectState;
+  readonly sockets: MasterHost["sockets"];
   private readonly database: SqlDatabase;
-  private readonly transcripts: R2Bucket;
+  private readonly transcripts: Bucket;
 
-  constructor(ctx: DurableObjectState, database: SqlDatabase, transcripts: R2Bucket) {
-    this.ctx = ctx;
+  constructor(sockets: MasterHost["sockets"], database: SqlDatabase, transcripts: Bucket) {
+    this.sockets = sockets;
     this.database = database;
     this.transcripts = transcripts;
     database.exec(
@@ -114,25 +115,15 @@ export class Nodes {
     return this.database.rows<Machine>("SELECT * FROM machines WHERE key=?", key)[0];
   }
 
-  connect(request: Request): Response {
-    const machine = this.authenticate(request);
-    if (!machine) return Response.json({ error: "Invalid node key" }, { status: 401 });
-    if (request.headers.get("upgrade") !== "websocket") {
-      return new Response("WebSocket required", { status: 426 });
-    }
-    for (const old of this.ctx.getWebSockets(machine.name)) old.close(1000, "Reconnected");
-    const { 0: client, 1: server } = new WebSocketPair();
-    this.ctx.acceptWebSocket(server, [machine.name]);
-    server.serializeAttachment({ machine: machine.name });
-    send(server, { type: "registered", name: machine.name });
-    return new Response(null, {
-      status: 101,
-      webSocket: client,
-      headers: { "sec-websocket-protocol": "optchat" },
-    });
+  /** Replace a machine's connection with the one `accept` opens, tagged with its name. */
+  connect(machine: string, accept: () => NodeSocket): void {
+    for (const old of this.sockets.getWebSockets(machine)) old.close(1000, "Reconnected");
+    const socket = accept();
+    socket.serializeAttachment({ machine });
+    send(socket, { type: "registered", name: machine });
   }
 
-  replay(machine: string, socket: WebSocket): number {
+  replay(machine: string, socket: NodeSocket): number {
     const jobs = this.database.rows<Job>(
       "SELECT * FROM spawns WHERE machine=? AND status='running'",
       machine,
@@ -147,7 +138,7 @@ export class Nodes {
         "SELECT name, roots, tools, models FROM machines",
       )
       .map((machine) => {
-        const sockets = this.ctx.getWebSockets(machine.name);
+        const sockets = this.sockets.getWebSockets(machine.name);
         return {
           name: machine.name,
           roots: stringList(parseJson(machine.roots)),
@@ -218,14 +209,18 @@ export class Nodes {
   async approve(id: string, startSandbox?: () => Promise<unknown>) {
     const job = this.job(id);
     if (!job || job.status !== "approval") throw new Error("No pending task with that id");
-    if (job.machine === "sandbox" && !this.ctx.getWebSockets(job.machine).length && startSandbox) {
+    if (
+      job.machine === "sandbox" &&
+      !this.sockets.getWebSockets(job.machine).length &&
+      startSandbox
+    ) {
       await startSandbox();
       const deadline = Date.now() + 10_000;
-      while (!this.ctx.getWebSockets(job.machine).length && Date.now() < deadline) {
+      while (!this.sockets.getWebSockets(job.machine).length && Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
     }
-    const [socket] = this.ctx.getWebSockets(job.machine);
+    const [socket] = this.sockets.getWebSockets(job.machine);
     if (!socket) throw new Error(`Machine ${job.machine} is offline`);
     await this.audit(id, "approved");
     if (this.job(id)?.status !== "approval") throw new Error("That task was already approved");
@@ -237,7 +232,7 @@ export class Nodes {
   async control(id: unknown, type: "tell" | "abort", message?: unknown) {
     const job = typeof id === "string" ? this.job(id) : undefined;
     if (!job || job.status !== "running") throw new Error("That Pi session is not running");
-    const [socket] = this.ctx.getWebSockets(job.machine);
+    const [socket] = this.sockets.getWebSockets(job.machine);
     if (!socket) throw new Error(`Machine ${job.machine} is offline`);
     const text = typeof message === "string" ? message : undefined;
     await this.audit(job.id, type, text ?? null);
@@ -260,7 +255,7 @@ export class Nodes {
     if (job.status !== "running") throw new Error("That Pi task has not been approved");
     await this.audit(id, status);
     return this.database.transaction(() => {
-      // Another delivery may have completed while R2 was writing the audit.
+      // Another delivery may have completed while the bucket was writing the audit.
       if (this.job(id)?.report !== null) return false;
       this.database.exec("UPDATE spawns SET status=?, report=? WHERE id=?", status, report, id);
       onReport(`[${id}] ${report}`);

@@ -2,9 +2,10 @@ import { isRecord } from "./json.ts";
 import { send } from "./nodes.ts";
 import type { ModelResult, RelayedRequest } from "./codex.ts";
 import type { ModelAnswer } from "./protocol.ts";
+import type { MasterHost, NodeSocket } from "./host.ts";
 
 interface Waiting {
-  socket: WebSocket;
+  socket: NodeSocket;
   resolve: (result: ModelResult) => void;
   reject: (error: Error) => void;
 }
@@ -14,12 +15,12 @@ interface Waiting {
  * Cloudflare's network (403), so a node that serves models calls it from its own machine.
  */
 export class ModelRelay {
-  private readonly ctx: DurableObjectState;
+  private readonly sockets: MasterHost["sockets"];
   private readonly allowed: (machine: string) => boolean;
   private readonly waiting = new Map<string, Waiting>();
 
-  constructor(ctx: DurableObjectState, allowed: (machine: string) => boolean) {
-    this.ctx = ctx;
+  constructor(sockets: MasterHost["sockets"], allowed: (machine: string) => boolean) {
+    this.sockets = sockets;
     this.allowed = allowed;
   }
 
@@ -27,8 +28,8 @@ export class ModelRelay {
    * An online node that announced it serves model calls and is still allowed to: the grant is
    * checked on every call, so revoking it applies to a connected node at once.
    */
-  node(): { socket: WebSocket; machine: string } | undefined {
-    for (const socket of this.ctx.getWebSockets()) {
+  node(): { socket: NodeSocket; machine: string } | undefined {
+    for (const socket of this.sockets.getWebSockets()) {
       const attachment: unknown = socket.deserializeAttachment();
       const machine = isRecord(attachment) ? attachment["machine"] : undefined;
       if (
@@ -43,7 +44,7 @@ export class ModelRelay {
     return undefined;
   }
 
-  call(socket: WebSocket, request: RelayedRequest, signal: AbortSignal): Promise<ModelResult> {
+  call(socket: NodeSocket, request: RelayedRequest, signal: AbortSignal): Promise<ModelResult> {
     const id = crypto.randomUUID();
     return new Promise((resolve, reject) => {
       if (signal.aborted) {
@@ -68,7 +69,7 @@ export class ModelRelay {
   }
 
   /** Fail every call waiting on a node that disconnected. */
-  drop(socket: WebSocket): void {
+  drop(socket: NodeSocket): void {
     for (const [id, waiting] of this.waiting) {
       if (waiting.socket === socket) this.fail(id, "The model node disconnected");
     }

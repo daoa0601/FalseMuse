@@ -10,6 +10,10 @@ This follows the gist's own design: §9's master that spawns subagents and logs 
 and §10's always-on host. The Durable Object is that host, and Pi's RPC mode is the subagent
 runtime.
 
+Since 2026-10-24 the Master is moving off the Durable Object onto the laptop, with Cloudflare kept
+for backup and an inbox; see
+[Direction: a local Master](#direction-a-local-master-decided-2026-10-24).
+
 ## Status
 
 | Phase                                 | State                                                                                                                                                                                                                                                                                                                     |
@@ -22,7 +26,7 @@ runtime.
 | 5. More nodes                         | Sandbox fallback deployed; home server not set up; live ingest on since 2026-10-11, following hand-run sessions from the import's end                                                                                                                                                                                     |
 | 6. Muse behaviour                     | Scheduled prompts and Code Mode deployed; Telegram/Discord and gated self-redeploy not started                                                                                                                                                                                                                            |
 
-**Next:** the open issues below.
+**Next:** L2 of the local Master (below).
 
 ## Direction: a chief of staff over t3code (decided 2026-10-10)
 
@@ -51,6 +55,46 @@ Rules that carry over: approvals of a thread's tool calls go to the owner, never
 because the Master reads untrusted logs; t3code calls sit behind one adapter pinned to a version,
 since its API is young; the node daemon keeps log ingest and the model relay, and t3code replaces
 its Pi task runner.
+
+## Direction: a local Master (decided 2026-10-24)
+
+The Durable Object buys little, because the Master's work depends on the laptop anyway.
+
+- Model calls go through the laptop's relay, because chatgpt.com refuses bulk calls from Cloudflare.
+- T3 Code threads and helpers run on the laptop, and live ingest reads its logs.
+- With the laptop asleep, the Master can at best answer one chat turn from memory.
+
+The phone already reaches the laptop through T3 Connect, where OptChat is an ACP provider. The cloud
+hop costs more than it gives:
+
+- It needs the model relay.
+- It needs owner auth on a public URL. Cloudflare Access has blocked every request, the node's too,
+  since 2026-10-23 22:36 UTC.
+- The node socket reconnected about 1,500 times a day.
+- Every prompt change needs a deploy.
+- It runs on a beta `cf` CLI with a 128 MB heap.
+
+What Cloudflare still does well is hold a copy off the laptop and take a message while the laptop
+sleeps, so it keeps those two jobs.
+
+| Step | Work                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| L1   | **Host seam.** The Master's logic moves to `src/master.ts` behind a `MasterHost`: SQL, key-value settings and one alarm, a bucket for transcripts, images and audit, node sockets, the model call, and optional Code Mode and Sandbox. Every Cloudflare type stays in `src/worker.ts`, whose Durable Object becomes an adapter with no change in behaviour.                                               |
+| L2   | **Local host.** `node/master.ts` runs the same Master under launchd on the laptop. It uses `node:sqlite` and files in `data/master/`, a timer for the alarm, and the laptop's own Codex or Pi login for model calls, with no relay. It serves the owner API, the page and the node WebSocket on 127.0.0.1 behind the owner key. Code Mode stays off until scripts can run in a locked-down child process. |
+| L3   | **Move.** Create an Access service token with the `cf` CLI. Add an export route to the Durable Object for its tables (in pages) and R2 objects, import them locally, and compare counts. Point `data/cloud.json`, the ACP agent, chat, live ingest and the node daemon at the local Master. Clear the old object's alarm and leave its data in place until L5.                                            |
+| L4   | **Backup and inbox.** The Worker keeps the page and a hibernating Inbox object. A message sent while the laptop is offline queues there, and the local Master drains the queue when it connects, outbound, so no tunnel is needed. A nightly `VACUUM INTO` snapshot and any new files go to R2.                                                                                                           |
+| L5   | **Remove.** Delete the Master Durable Object class (with a migration), the Sandbox and its container, the relay, the Worker Loader binding and the Master's own device login.                                                                                                                                                                                                                             |
+
+Decisions:
+
+- **The Sandbox goes.** The laptop already runs Pi and T3 Code; the export in L3 shows whether any
+  task ever ran in it.
+- **T3 sign-ins** move with the database, and their refresh tokens keep working. New sign-ins
+  redirect to localhost.
+- **A home server** later either connects to the laptop's Master over Tailscale or hosts the Master
+  itself, since `node/master.ts` is portable.
+- **The laptop sleeps.** Schedules and thread checks that fall due while it sleeps run when it
+  wakes.
 
 ## Import
 
