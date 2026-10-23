@@ -1293,6 +1293,10 @@ test("the Master moves to a local Master with its memory, settings, schedules an
 
     assert.deepEqual(await worker.json("/api/export/park", {}), { moved: true });
     assert.equal((await worker.request("/api/status")).status, 410);
+    const download = await worker.request("/api/export/object?key=sessions/moved-1.jsonl");
+    assert.equal(download.headers.get("content-disposition"), "attachment");
+    assert.equal(download.headers.get("x-content-type-options"), "nosniff");
+    await download.arrayBuffer();
     const target = join(worker.directory, "local");
     const lines: string[] = [];
     // Miniflare's responses carry the same fields the move reads from fetch's.
