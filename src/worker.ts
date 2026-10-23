@@ -2,6 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import type { SqlDatabase, SqlValue } from "./database.ts";
 import { executeCode } from "./codemode.ts";
 import * as core from "./master.ts";
+import { requireString } from "./json.ts";
 export { Sandbox } from "./sandbox.ts";
 export { DirectoryBackupGateway } from "@cloudflare/sandbox";
 
@@ -56,7 +57,16 @@ export class Master extends DurableObject<Env> {
   }
 
   override async fetch(request: Request): Promise<Response> {
-    if (new URL(request.url).pathname !== "/node/ws") return this.master.fetch(request);
+    const url = new URL(request.url);
+    // The Worker has already authenticated the owner for /api routes.
+    if (url.pathname.startsWith("/api/export/")) {
+      try {
+        return await this.export(url);
+      } catch (error) {
+        return Response.json({ error: String(error) }, { status: 400 });
+      }
+    }
+    if (url.pathname !== "/node/ws") return this.master.fetch(request);
     const machine = this.master.nodeMachine(request);
     if (typeof machine !== "string") return machine;
     const { 0: client, 1: server } = new WebSocketPair();
@@ -69,6 +79,77 @@ export class Master extends DurableObject<Env> {
       webSocket: client,
       headers: { "sec-websocket-protocol": "optchat" },
     });
+  }
+
+  /**
+   * Hand the Master's state to the owner for its move to the laptop: each table's schema and rows
+   * in rowid order, the owner's instructions, and the bucket's objects.
+   */
+  private async export(url: URL): Promise<Response> {
+    const sql = this.ctx.storage.sql;
+    const query = url.searchParams;
+    // Durable Object internals and SQLite's own tables stay; a full-text table's rows are exported
+    // and its shadow tables rebuilt from them.
+    const tables = sql
+      .exec<{ type: string; name: string; sql: string }>(
+        "SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE '\\_cf\\_%' ESCAPE '\\' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY rowid",
+      )
+      .toArray();
+    const virtual = tables.filter((table) => /^CREATE VIRTUAL TABLE/i.test(table.sql));
+    const exported = tables.filter(
+      (table) =>
+        table.type === "table" && !virtual.some((owner) => table.name.startsWith(`${owner.name}_`)),
+    );
+    switch (url.pathname) {
+      case "/api/export/schema":
+        return Response.json({
+          tables: exported.map(({ name, sql: create }) => ({
+            name,
+            sql: create,
+            rows: sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM "${name}"`).one()
+              .count,
+          })),
+          indexes: tables.filter((table) => table.type === "index").map((index) => index.sql),
+          instructions: (await this.ctx.storage.get<string>("instructions")) ?? null,
+        });
+      case "/api/export/rows": {
+        const name = requireString(query.get("table"), "Name a table");
+        if (!exported.some((table) => table.name === name)) throw new Error("No such table");
+        const cursor = sql.exec(
+          `SELECT rowid AS "rowid", * FROM "${name}" WHERE rowid > ? ORDER BY rowid LIMIT ?`,
+          // Message ids start at 0, so the first page has no lower bound.
+          Number(query.get("after") ?? Number.MIN_SAFE_INTEGER),
+          Math.min(Number(query.get("limit") ?? 200), 1000),
+        );
+        const rows = [...cursor.raw()];
+        if (rows.some((row) => row.some((value) => value instanceof ArrayBuffer))) {
+          throw new Error(`${name} holds binary values, which this export does not carry`);
+        }
+        return Response.json({ columns: cursor.columnNames, rows });
+      }
+      case "/api/export/objects": {
+        const cursor = query.get("cursor");
+        const listed = await this.env.TRANSCRIPTS.list({
+          limit: 1000,
+          ...(cursor ? { cursor } : {}),
+        });
+        return Response.json({
+          objects: listed.objects.map(({ key, size }) => ({ key, size })),
+          cursor: listed.truncated ? listed.cursor : null,
+        });
+      }
+      case "/api/export/object": {
+        const object = await this.env.TRANSCRIPTS.get(
+          requireString(query.get("key"), "Name a key"),
+        );
+        if (!object) return Response.json({ error: "No such object" }, { status: 404 });
+        return new Response(object.body, {
+          headers: { "content-length": String(object.size) },
+        });
+      }
+      default:
+        return Response.json({ error: "No such export" }, { status: 404 });
+    }
   }
 
   override alarm(): Promise<void> {
