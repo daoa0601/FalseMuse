@@ -92,6 +92,19 @@ Sets the instructions the Master reads at the start of each turn (who you are, h
 done) from a private file; without a file it prints them, and an empty file clears them. Turns also
 carry the time in `OWNER_TIMEZONE` (`cloudflare.config.ts`), so the Master can schedule check-ins.
 
+## Local Master
+
+```bash
+node node/master.ts
+```
+
+Runs the Master on this computer at `http://127.0.0.1:8790`, with its database and files in
+`data/master/` and the same owner key as the cloud. It makes model calls with this computer's Codex
+or Pi login, and runs Code Mode scripts in a child Node process that Node's permission model keeps
+from files, network and other processes. An optional `data/master.json` sets `port`, `directory`,
+`masterModel`, `compactorModel`, `compactorEffort` and `timezone`. It starts empty until the cloud
+Master's data is moved (PLAN.md, L3).
+
 ## Nodes
 
 ```bash

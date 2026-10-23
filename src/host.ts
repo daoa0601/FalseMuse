@@ -1,5 +1,5 @@
 import type { SqlDatabase } from "./database.ts";
-import type { Credential } from "./codex.ts";
+import type { ModelResult, RelayedRequest } from "./codex.ts";
 
 /**
  * What the Master needs from the machine it runs on. A Durable Object provides it in
@@ -17,10 +17,10 @@ export interface MasterHost {
   waitUntil(work: Promise<unknown>): void;
   config: MasterConfig;
   /**
-   * The machine's own subscription login for model calls. Without it the Master uses the device
-   * login it keeps in storage.
+   * Call the model with the machine's own subscription login. Without it the Master calls through
+   * a node that serves models, else with the device login it keeps in storage.
    */
-  credentials?: () => Promise<Credential>;
+  callModel?: (request: RelayedRequest & { signal: AbortSignal }) => Promise<ModelResult>;
   /** Run a Code Mode script whose only outside access is `invoke`. */
   runCode?: (code: string, invoke: CodeInvoke) => Promise<unknown>;
   sandbox?: SandboxControl;

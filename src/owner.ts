@@ -8,7 +8,15 @@ async function digest(text: string): Promise<ArrayBuffer> {
 
 /** Compare secrets in constant time; hashing first makes the lengths equal. */
 async function same(candidate: string, secret: string): Promise<boolean> {
-  return crypto.subtle.timingSafeEqual(await digest(candidate), await digest(secret));
+  const [left, right] = [
+    new Uint8Array(await digest(candidate)),
+    new Uint8Array(await digest(secret)),
+  ];
+  let difference = 0;
+  for (let index = 0; index < left.length; index++) {
+    difference |= (left[index] ?? 0) ^ (right[index] ?? 0);
+  }
+  return difference === 0;
 }
 
 /**

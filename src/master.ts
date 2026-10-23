@@ -4,7 +4,6 @@ import { Memory, isMessageKind, type NewMessage, type Part } from "./memory.ts";
 import { pump, type PumpResult } from "./compact.ts";
 import {
   codexCall,
-  type Credential,
   functionCall,
   isReasoningEffort,
   messageText,
@@ -223,7 +222,7 @@ export class Master {
     this.sql = database;
     this.memory = new Memory(database);
     this.nodes = new Nodes(host.sockets, database, host.bucket);
-    if (!this.nodes.machine("sandbox")) {
+    if (host.sandbox && !this.nodes.machine("sandbox")) {
       this.nodes.register({
         name: "sandbox",
         roots: ["/workspace/repo"],
@@ -900,11 +899,10 @@ export class Master {
 
   /** The host's own login counts; otherwise the Master needs its device login. */
   private async authenticated(): Promise<boolean> {
-    return Boolean(this.host.credentials) || Boolean(await this.host.storage.get("oauth"));
+    return Boolean(this.host.callModel) || Boolean(await this.host.storage.get("oauth"));
   }
 
-  private async credentials(): Promise<Credential> {
-    if (this.host.credentials) return this.host.credentials();
+  private async credentials(): Promise<OAuthCredential> {
     const credential = await this.host.storage.get<OAuthCredential>("oauth");
     if (!credential) throw new Error("Connect the ChatGPT subscription before calling a model");
     if (credential.expires > Date.now() + 300_000) return credential;
@@ -939,9 +937,10 @@ export class Master {
     };
     const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(180_000)]);
     const node = this.relay.node();
-    const result = node
-      ? await this.relay.call(node.socket, relayed, signal)
-      : await codexCall(await this.credentials(), { ...relayed, signal });
+    let result: ModelResult;
+    if (node) result = await this.relay.call(node.socket, relayed, signal);
+    else if (this.host.callModel) result = await this.host.callModel({ ...relayed, signal });
+    else result = await codexCall(await this.credentials(), { ...relayed, signal });
     this.usage.record({
       date: new Date().toISOString(),
       purpose,

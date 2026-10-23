@@ -14,6 +14,9 @@ importers:
       '@cloudflare/sandbox':
         specifier: 1.0.0
         version: 1.0.0
+      ws:
+        specifier: 8.22.0
+        version: 8.22.0
     devDependencies:
       '@cloudflare/config':
         specifier: 0.23.0
@@ -24,6 +27,9 @@ importers:
       '@types/node':
         specifier: 22.20.1
         version: 22.20.1
+      '@types/ws':
+        specifier: 8.18.1
+        version: 8.18.1
       cf:
         specifier: 1.0.0-beta.12
         version: 1.0.0-beta.12(@types/node@22.20.1)
@@ -981,6 +987,9 @@ packages:
 
   '@types/retry@0.12.0':
     resolution: {integrity: sha512-wWKOClTTiizcZhXnPY4wikVAwmdYHp8q6DmC+EJUzAMsycb7HB32Kh9RN4+0gExjmPmZSAQjgURXIGATPegAvA==}
+
+  '@types/ws@8.18.1':
+    resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
 
   acorn@8.19.0:
     resolution: {integrity: sha512-oJlA3XiRm7Cyk6qFD2Jn8ak9B7jSy0qy00ADO3+8dpT0LSjFihQYv4C02LFCSYJV3Q37xYwwRy5m+IpIiUzqWw==}
@@ -2214,6 +2223,10 @@ snapshots:
       undici-types: 6.21.0
 
   '@types/retry@0.12.0': {}
+
+  '@types/ws@8.18.1':
+    dependencies:
+      '@types/node': 22.20.1
 
   acorn@8.19.0: {}
 
