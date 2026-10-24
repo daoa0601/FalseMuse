@@ -10,8 +10,8 @@ This follows the gist's own design: §9's master that spawns subagents and logs 
 and §10's always-on host. The Durable Object is that host, and Pi's RPC mode is the subagent
 runtime.
 
-Since 2026-10-24 the Master is moving off the Durable Object onto the laptop, with Cloudflare kept
-for backup and an inbox; see
+Since 2026-10-24 the Master runs on the laptop, and the Durable Object is parked; Cloudflare is to
+keep a backup and an inbox. See
 [Direction: a local Master](#direction-a-local-master-decided-2026-10-24).
 
 ## Status
@@ -26,7 +26,7 @@ for backup and an inbox; see
 | 5. More nodes                         | Sandbox fallback deployed; home server not set up; live ingest on since 2026-10-11, following hand-run sessions from the import's end                                                                                                                                                                                     |
 | 6. Muse behaviour                     | Scheduled prompts and Code Mode deployed; Telegram/Discord and gated self-redeploy not started                                                                                                                                                                                                                            |
 
-**Next:** L3 of the local Master (below).
+**Next:** L4 of the local Master (below).
 
 ## Direction: a chief of staff over t3code (decided 2026-10-10)
 
@@ -77,18 +77,18 @@ hop costs more than it gives:
 What Cloudflare still does well is hold a copy off the laptop and take a message while the laptop
 sleeps, so it keeps those two jobs.
 
-| Step | Work                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| L1   | **Host seam.** The Master's logic moves to `src/master.ts` behind a `MasterHost`: SQL, key-value settings and one alarm, a bucket for transcripts, images and audit, node sockets, the model call, and optional Code Mode and Sandbox. Every Cloudflare type stays in `src/worker.ts`, whose Durable Object becomes an adapter with no change in behaviour.                                                                                                                       |
-| L2   | **Local host.** Done: `node/master.ts` runs the same Master on the laptop. It uses `node:sqlite` and files in `data/master/`, a timer for the alarm, and the laptop's own Codex or Pi login for model calls, with no relay. It serves the owner API, the page and the node WebSocket on 127.0.0.1 behind the owner key. Code Mode scripts run in a child Node process under the permission model (no files, network, DNS, processes, workers or environment), 20 seconds at most. |
-| L3   | **Move.** Create an Access service token with the `cf` CLI. Add an export route to the Durable Object for its tables (in pages) and R2 objects, import them locally, and compare counts. Point `data/cloud.json`, the ACP agent, chat, live ingest and the node daemon at the local Master. Clear the old object's alarm and leave its data in place until L5.                                                                                                                    |
-| L4   | **Backup and inbox.** The Worker keeps the page and a hibernating Inbox object. A message sent while the laptop is offline queues there, and the local Master drains the queue when it connects, outbound, so no tunnel is needed. A nightly `VACUUM INTO` snapshot and any new files go to R2.                                                                                                                                                                                   |
-| L5   | **Remove.** Delete the Master Durable Object class (with a migration), the Sandbox and its container, the relay, the Worker Loader binding and the Master's own device login.                                                                                                                                                                                                                                                                                                     |
+| Step | Work                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| L1   | **Host seam.** The Master's logic moves to `src/master.ts` behind a `MasterHost`: SQL, key-value settings and one alarm, a bucket for transcripts, images and audit, node sockets, the model call, and optional Code Mode and Sandbox. Every Cloudflare type stays in `src/worker.ts`, whose Durable Object becomes an adapter with no change in behaviour.                                                                                                                                                             |
+| L2   | **Local host.** Done: `node/master.ts` runs the same Master on the laptop. It uses `node:sqlite` and files in `data/master/`, a timer for the alarm, and the laptop's own Codex or Pi login for model calls, with no relay. It serves the owner API, the page and the node WebSocket on 127.0.0.1 behind the owner key. Code Mode scripts run in a child Node process under the permission model (no files, network, DNS, processes, workers or environment), 20 seconds at most.                                       |
+| L3   | **Move.** Done 2026-10-24. An Access application on the Worker admits the owner and the laptop's service token. The Durable Object was parked (it answers 410 outside `/api/export/`, with no alarm and no sockets) and exported: 27 tables matched by count, including 21,631 messages and 43,252 nodes, and 9,092 objects (11 GB) matched by size. `com.anhdao.optchat-master` serves it from `data/master/`; chat, the ACP agent, live ingest and the node daemon point at it. The old data stays in place until L5. |
+| L4   | **Backup and inbox.** The Worker keeps the page and a hibernating Inbox object. A message sent while the laptop is offline queues there, and the local Master drains the queue when it connects, outbound, so no tunnel is needed. A nightly `VACUUM INTO` snapshot and any new files go to R2.                                                                                                                                                                                                                         |
+| L5   | **Remove.** Delete the Master Durable Object class (with a migration), the Sandbox and its container, the relay, the Worker Loader binding and the Master's own device login.                                                                                                                                                                                                                                                                                                                                           |
 
 Decisions:
 
-- **The Sandbox goes.** The laptop already runs Pi and T3 Code; the export in L3 shows whether any
-  task ever ran in it.
+- **The Sandbox goes.** The laptop already runs Pi and T3 Code. The export showed the Sandbox ran 4
+  tasks (3 done, 1 aborted) against the laptop's 7.
 - **T3 sign-ins** move with the database, and their refresh tokens keep working. New sign-ins
   redirect to localhost.
 - **A home server** later either connects to the laptop's Master over Tailscale or hosts the Master
@@ -206,6 +206,10 @@ model access: cloud calls go through the laptop relay and its subscription's rat
 refusals, 6 lines over 512 bytes by 1–44 bytes, which the retry loop handles.
 
 ## Architecture
+
+This is the cloud layout, which L5 removes. Since L3 the same Master runs on the laptop
+(`node/master.ts`, SQLite and a directory for the bucket), makes its own model calls, and the node
+daemon connects to it on 127.0.0.1.
 
 ```
             you: web chat / terminal (only you; one log, one writer)
