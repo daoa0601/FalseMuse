@@ -12,6 +12,7 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import time
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from .normalize import CONFIG
@@ -197,6 +198,39 @@ class LiveIngest:
             counts["skipped"] = sorted(self.skipped - already)
         return counts
 
+
+# The most messages the Master accepts in one ingest request.
+INGEST_BATCH = 1000
+
+
+def node_upload(config: dict):
+    """Upload to the Master named in a node's config: the recording, its transcript, then its
+    messages in batches the Master accepts. The Master skips a message it already holds, so an
+    upload that fails after some batches is safely sent again in full."""
+    # Cloudflare refuses urllib's default User-Agent (error 1010) before the Worker sees it.
+    headers = {"authorization": "Bearer " + config["key"], "user-agent": "OptChat-node/1"}
+
+    def send(name: str, path: str, data: bytes, extra: dict, method: str = "POST") -> None:
+        try:
+            with urlopen(Request(config["url"] + path, data, {**headers, **extra}, method=method), timeout=60) as response:
+                response.read()
+        except HTTPError as error:
+            with error:
+                reason = error.read()[:300].decode(errors="replace")
+            raise OSError(f"{name}: {path.split('?')[0]} answered {error.code} {reason}") from error
+
+    def upload(session: Session, transcript: Path, messages: list[dict]) -> None:
+        name = session_name(session)
+        json_type = {"content-type": "application/json"}
+        send(name, "/node/recordings", json.dumps({"session": name, "kind": session.kind}).encode(), json_type)
+        send(name, "/node/transcript?session=" + f"live/{config['name']}/{name}", transcript.read_bytes(), {}, "PUT")
+        for start in range(0, max(len(messages), 1), INGEST_BATCH):
+            batch = messages[start:start + INGEST_BATCH]
+            send(name, "/node/ingest", json.dumps({"session": name, "messages": batch}).encode(), json_type)
+
+    return upload
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
@@ -210,18 +244,7 @@ def main() -> None:
     config = json.loads(args.config.read_text())
     ingest = LiveIngest(args.home, args.state, args.baseline)
 
-    def upload(session, transcript, messages):
-        # Cloudflare refuses urllib's default User-Agent (error 1010) before the Worker sees it.
-        headers = {"authorization": "Bearer " + config["key"], "user-agent": "OptChat-node/1"}
-        name = session_name(session)
-        body = {"session": name, "kind": session.kind}
-        with urlopen(Request(config["url"] + "/node/recordings", json.dumps(body).encode(), {**headers, "content-type": "application/json"}), timeout=60) as response:
-            response.read()
-        key = f"live/{config['name']}/{name}"
-        with urlopen(Request(config["url"] + "/node/transcript?session=" + key, transcript.read_bytes(), headers, method="PUT"), timeout=60) as response:
-            response.read()
-        with urlopen(Request(config["url"] + "/node/ingest", json.dumps({"session": name, "messages": messages}).encode(), {**headers, "content-type": "application/json"}), timeout=60) as response:
-            response.read()
+    upload = node_upload(config)
 
     try:
         while True:
