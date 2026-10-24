@@ -384,6 +384,41 @@ export class Computers {
     });
   }
 
+  /**
+   * The model selection for a provider instance and model the computer offers, or a refusal naming
+   * what it offers; both empty or left out mean the project's default in T3 Code.
+   */
+  async choose(
+    name: string,
+    provider: unknown,
+    model: unknown,
+  ): Promise<ModelSelection | undefined> {
+    const text = (value: unknown, field: string) => {
+      if (value !== undefined && typeof value !== "string")
+        throw new Error(`${field} must be text`);
+      return value?.trim() ?? "";
+    };
+    const instance = text(provider, "provider");
+    const chosen = text(model, "model");
+    if (!instance !== !chosen) {
+      throw new Error("Give both a provider and a model, or neither for the project's default");
+    }
+    if (!instance) return undefined;
+    const providers = await this.models(name);
+    const entry = providers.find((candidate) => candidate.provider === instance);
+    if (!entry) {
+      throw new Error(
+        `${name} has no provider ${instance}; it has ${providers.map((candidate) => candidate.provider).join(", ")}`,
+      );
+    }
+    if (!entry.models.includes(chosen)) {
+      throw new Error(
+        `${instance} on ${name} has no model ${chosen}; it has ${entry.models.join(", ")}`,
+      );
+    }
+    return { instanceId: instance, model: chosen };
+  }
+
   /** Switch a thread to another provider instance or model. */
   configure(name: string, thread: string, modelSelection: ModelSelection) {
     return this.call(name, "t3_thread_configure", { threadId: thread, modelSelection });
