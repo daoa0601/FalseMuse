@@ -1,13 +1,15 @@
 import io
 import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 from contextlib import redirect_stdout
 from unittest import mock
 
 from optchat_memory import redaction
-from optchat_memory.live import LiveIngest, prepare
+from optchat_memory.live import LiveIngest, node_upload, prepare
 from optchat_memory.sources import ROOTS, identify
 
 
@@ -181,6 +183,55 @@ class LiveIngestTests(unittest.TestCase):
             boundary, finished, _ = prepare(session, self.root / "finished", self.root / "finished.jsonl", 0)
         self.assertEqual(boundary, 4)
         self.assertEqual([m["kind"] for m in finished], ["user", "talk"])
+class NodeUploadTests(unittest.TestCase):
+    def serve(self, refuse=None):
+        """A stand-in Master that records each request and answers `refuse` to /node/ingest."""
+        received = []
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                body = self.rfile.read(int(self.headers["content-length"]))
+                received.append((self.path, json.loads(body)))
+                if refuse and self.path == "/node/ingest":
+                    self.send_response(400)
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"error": refuse}).encode())
+                    return
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"{}")
+            def do_PUT(self):
+                self.rfile.read(int(self.headers["content-length"]))
+                self.send_response(200)
+                self.end_headers()
+            def log_message(self, *args):
+                pass
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name) / ROOTS["codex"]
+        root.mkdir(parents=True)
+        (root / "session.jsonl").write_text(json.dumps({"type": "session_meta", "timestamp": "2026-10-01T10:00:00Z", "payload": {"id": "session", "timestamp": "2026-10-01T10:00:00Z", "source": "cli"}}) + "\n")
+        session = identify("codex", root, root / "session.jsonl")
+        transcript = root / "session.jsonl"
+        upload = node_upload({"url": f"http://127.0.0.1:{server.server_port}", "key": "key", "name": "laptop"})
+        return received, lambda messages: upload(session, transcript, messages)
+
+    def test_a_long_backlog_reaches_the_master_in_batches_it_accepts(self):
+        received, upload = self.serve()
+        messages = [{"kind": "user", "text": str(line), "timestamp": "2026-10-01T10:00:00Z", "line": line} for line in range(1, 2501)]
+        upload(messages)
+        batches = [body["messages"] for path, body in received if path == "/node/ingest"]
+        self.assertEqual([len(batch) for batch in batches], [1000, 1000, 500])
+        self.assertEqual([message for batch in batches for message in batch], messages)
+
+    def test_a_refused_batch_names_the_session_and_the_masters_reason(self):
+        _, upload = self.serve(refuse="Send complete messages in source-line order")
+        with self.assertRaisesRegex(OSError, "codex/session.*400.*Send complete messages in source-line order"):
+            upload([{"kind": "user", "text": "Fix it.", "timestamp": "2026-10-01T10:00:00Z", "line": 1}])
+
 
 if __name__ == "__main__":
     unittest.main()
