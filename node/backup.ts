@@ -40,15 +40,50 @@ export interface BackupResult {
 const UPLOADS = 4;
 const SNAPSHOT = /^snapshots\/master-\d{4}-\d{2}-\d{2}\.sqlite\.gz$/;
 
-async function request(url: string, init: RequestInit, what: string): Promise<unknown> {
-  const response = await fetch(url, { ...init, redirect: "manual" });
-  const text = await response.text();
-  if (!response.ok) throw new Error(`${what} answered ${response.status} ${text.slice(0, 200)}`);
-  return parseJson(text);
+const ATTEMPTS = 4;
+
+/** Why a request failed; fetch hides the network's reason in `cause`. */
+function failure(error: unknown): string {
+  const cause = isRecord(error) ? error["cause"] : undefined;
+  return cause === undefined
+    ? errorMessage(error)
+    : `${errorMessage(error)} (${errorMessage(cause)})`;
+}
+
+/**
+ * One backup request, tried again after a network failure or a server error with waits doubling
+ * from `retryMs`; a refusal (4xx) is final.
+ */
+async function request(
+  url: string,
+  init: RequestInit,
+  what: string,
+  retryMs: number,
+): Promise<unknown> {
+  for (let attempt = 1; ; attempt++) {
+    let response: Response | null = null;
+    let text = "";
+    let problem: string;
+    try {
+      const answer = await fetch(url, { ...init, redirect: "manual" });
+      text = await answer.text();
+      response = answer;
+      problem = `${what} answered ${answer.status} ${text.slice(0, 200)}`;
+    } catch (error) {
+      problem = `${what} failed: ${failure(error)}`;
+    }
+    if (response?.ok) return parseJson(text);
+    if ((response && response.status < 500) || attempt === ATTEMPTS) throw new Error(problem);
+    await new Promise((resolve) => setTimeout(resolve, retryMs * 2 ** (attempt - 1)));
+  }
 }
 
 /** The Worker's /backup routes, with the owner key and any Access token in `headers`. */
-export function workerBucket(url: string, headers: Record<string, string>): RemoteBucket {
+export function workerBucket(
+  url: string,
+  headers: Record<string, string>,
+  { retryMs = 2_000 }: { retryMs?: number } = {},
+): RemoteBucket {
   const route = (path: string, query: Record<string, string>) =>
     `${url}/backup/${path}?${new URLSearchParams(query)}`;
   const put = async (path: string, query: Record<string, string>, body: Buffer) =>
@@ -60,6 +95,7 @@ export function workerBucket(url: string, headers: Record<string, string>): Remo
         body: new Uint8Array(body),
       },
       `Backup of ${query["key"]}`,
+      retryMs,
     );
   return {
     async list(prefix = "") {
@@ -70,6 +106,7 @@ export function workerBucket(url: string, headers: Record<string, string>): Remo
           route("list", { prefix, ...(cursor ? { cursor } : {}) }),
           { headers },
           "The backup listing",
+          retryMs,
         );
         if (!isRecord(page) || !Array.isArray(page["objects"])) {
           throw new Error("The backup listing has no objects");
@@ -102,6 +139,7 @@ export function workerBucket(url: string, headers: Record<string, string>): Remo
             body: "{}",
           },
           `Backup of ${key}`,
+          retryMs,
         );
         const upload = isRecord(started) ? started["upload"] : undefined;
         if (typeof upload !== "string") throw new Error(`Backup of ${key} started no upload`);
@@ -119,13 +157,19 @@ export function workerBucket(url: string, headers: Record<string, string>): Remo
             body: JSON.stringify({ parts }),
           },
           `Backup of ${key}`,
+          retryMs,
         );
       } finally {
         await handle.close();
       }
     },
     async remove(key) {
-      await request(route("object", { key }), { method: "DELETE", headers }, `Removing ${key}`);
+      await request(
+        route("object", { key }),
+        { method: "DELETE", headers },
+        `Removing ${key}`,
+        retryMs,
+      );
     },
   };
 }
