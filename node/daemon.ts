@@ -9,9 +9,6 @@ import {
 import { resolve, join } from "node:path";
 import { spawn } from "node:child_process";
 import { TaskRunner } from "./runner.ts";
-import { answerModelRequest } from "./models.ts";
-import { localAuth } from "./local-auth.ts";
-import type { Credential } from "../src/codex.ts";
 import { readNodeConfig } from "./config.ts";
 import { errorMessage, isRecord } from "../src/json.ts";
 import { parseCloudMessage, type CloudMessage, type NodeMessage } from "../src/protocol.ts";
@@ -22,7 +19,6 @@ const outbox = join(resolve(config.directory ?? "data"), "node-outbox");
 mkdirSync(outbox, { recursive: true, mode: 0o700 });
 let socket: WebSocket | undefined;
 const runner = new TaskRunner(config, send);
-let credentials: Promise<() => Promise<Credential>> | undefined;
 
 /** Reports, usage, and recovery notices stay in the outbox until the cloud acknowledges them. */
 function send(value: NodeMessage): void {
@@ -64,25 +60,8 @@ async function handle(command: CloudMessage | null): Promise<void> {
   if (!command) return;
   switch (command.type) {
     case "registered":
-      send(config.models ? { type: "node_ready", models: true } : { type: "node_ready" });
+      send({ type: "node_ready" });
       return;
-    case "model_request": {
-      if (!config.models) {
-        send({ type: "model_result", id: command.id, error: "This node does not serve models" });
-        return;
-      }
-      credentials ??= localAuth();
-      let source: () => Promise<Credential>;
-      try {
-        source = await credentials;
-      } catch (error) {
-        credentials = undefined; // try the login again on the next request
-        send({ type: "model_result", id: command.id, error: errorMessage(error) });
-        return;
-      }
-      send(await answerModelRequest(command.id, command.request, source));
-      return;
-    }
     case "permission":
       runner.permission(command);
       return;

@@ -71,10 +71,6 @@ export async function pollDeviceLogin(device: DeviceLogin): Promise<OAuthCredent
   });
 }
 
-export function refreshLogin(credential: OAuthCredential): Promise<OAuthCredential> {
-  return tokenRequest({ grant_type: "refresh_token", refresh_token: credential.refresh });
-}
-
 /** The ChatGPT account ID inside a subscription access token. */
 export function accountIdOf(accessToken: string): string {
   const payload = accessToken.split(".")[1];

@@ -4,7 +4,6 @@ import { execFileSync } from "node:child_process";
 import { PiRpc, type PiEvent } from "./pi-rpc.ts";
 import { JobJournal, prepareSession, type JobSnapshot } from "./jobs.ts";
 import { processHandle, processRunning } from "./process.ts";
-import { sandboxSubscription } from "./subscription.ts";
 import type { NodeConfig } from "./config.ts";
 import { errorMessage, isRecord } from "../src/json.ts";
 import { quotaHeaders } from "../src/usage.ts";
@@ -113,9 +112,6 @@ export class TaskRunner {
         sessionFile: snapshot.sessionFile,
         tools: this.config.tools,
         agentDirectory: this.profile,
-        ...(this.config.subscriptionConfig
-          ? { subscriptionConfig: this.config.subscriptionConfig }
-          : {}),
       });
       job.rpc = rpc;
       rpc.on("fault", (error) => {
@@ -157,13 +153,6 @@ export class TaskRunner {
 
   private async authenticate(): Promise<void> {
     const file = join(this.profile, "auth.json");
-    if (this.config.subscription === "cloud") {
-      const credential = await sandboxSubscription(this.config);
-      mkdirSync(this.profile, { recursive: true, mode: 0o700 });
-      writeFileSync(file, JSON.stringify({ "openai-codex": { type: "oauth", ...credential } }), {
-        mode: 0o600,
-      });
-    }
     if (!existsSync(file)) {
       throw new Error(
         "This node needs its own subscription login. Run node node/login.ts in the OptChat repository.",

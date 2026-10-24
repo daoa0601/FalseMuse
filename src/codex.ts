@@ -69,8 +69,8 @@ export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
 export const isReasoningEffort = (value: unknown): value is ReasoningEffort =>
   value === "low" || value === "medium" || value === "high" || value === "xhigh";
 
-/** A model call as the Master relays it to a node: everything but the credential and signal. */
-export type RelayedRequest = ModelRequest & {
+/** A model call as the Master hands it to its host: everything but the credential and signal. */
+export type BackendRequest = ModelRequest & {
   model: string;
   cacheKey: string;
   effort: ReasoningEffort;
@@ -90,51 +90,6 @@ export function user(texts: string[], images: InputImage[] = []): UserInput {
 
 function isResponseItem(value: unknown): value is ResponseItem {
   return isRecord(value) && typeof value["type"] === "string";
-}
-
-/** Check a relayed request: the node calls the backend with exactly these fields. */
-export function relayedRequest(value: unknown): RelayedRequest {
-  if (
-    !isRecord(value) ||
-    typeof value["model"] !== "string" ||
-    typeof value["system"] !== "string" ||
-    typeof value["cacheKey"] !== "string" ||
-    !isReasoningEffort(value["effort"]) ||
-    !Array.isArray(value["input"]) ||
-    !value["input"].every(isRecord) ||
-    (value["tools"] !== undefined && !Array.isArray(value["tools"]))
-  ) {
-    throw new Error("The model request is incomplete");
-  }
-  return {
-    model: value["model"],
-    system: value["system"],
-    cacheKey: value["cacheKey"],
-    effort: value["effort"],
-    // The Master built these items and tool definitions; the node passes them through.
-    input: value["input"] as unknown as InputItem[],
-    ...(Array.isArray(value["tools"])
-      ? { tools: value["tools"] as unknown as ToolDefinition[] }
-      : {}),
-  };
-}
-
-/** Check a model result a node sends back; its output items are resent to the backend later. */
-export function modelResult(value: unknown): ModelResult {
-  if (
-    !isRecord(value) ||
-    typeof value["text"] !== "string" ||
-    !Array.isArray(value["output"]) ||
-    !value["output"].every(isResponseItem)
-  ) {
-    throw new Error("The node returned an incomplete model result");
-  }
-  return {
-    text: value["text"],
-    output: value["output"],
-    usage: value["usage"],
-    quota: quotaHeaders(value["quota"]),
-  };
 }
 
 /** The text of an assistant message item, or null for any other item. */

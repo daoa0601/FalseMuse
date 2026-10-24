@@ -9,14 +9,6 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.5}small{color:#aab
 <form id="login"><input name="key" type="password" placeholder="Owner key" required><button>Sign in</button></form>
 <main hidden>
   <small id="status"></small>
-  <p><button id="connect">Connect ChatGPT subscription</button><span id="device"></span></p>
-  <details><summary>Sandbox fallback</summary>
-    <p id="sandbox-status"></p>
-    <button id="sandbox-start">Start Sandbox</button>
-    <button id="sandbox-save">Save workspace and stop</button>
-    <button id="sandbox-connect">Connect Sandbox subscription</button>
-    <span id="sandbox-device"></span>
-  </details>
   <details><summary>Scheduled prompts</summary>
     <section id="schedules"></section>
     <form id="schedule">
@@ -88,8 +80,7 @@ async function refresh() {
     select('#login').hidden = true;
     select('main').hidden = false;
     select('#status').textContent = status.messages + ' messages · ' + status.nodes +
-      ' summaries · subscription ' + (status.authenticated ? 'connected' : 'disconnected') +
-      ' · ' + status.pending + ' queued' + (status.error ? ' · ' + status.error : '');
+      ' summaries · ' + status.pending + ' queued' + (status.error ? ' · ' + status.error : '');
     const messages = await api('messages');
     select('#messages').replaceChildren(...messages.map(messageElement));
   } catch (error) {
@@ -159,34 +150,6 @@ async function refreshSchedules() {
   }
 }
 
-async function refreshSandbox() {
-  try {
-    const sandbox = await api('sandbox');
-    select('#sandbox-status').textContent = sandbox.state +
-      ' · subscription ' + (sandbox.authenticated ? 'connected' : 'disconnected') +
-      (sandbox.repository ? ' · ' + sandbox.repository : '') + (sandbox.error ? ' · ' + sandbox.error : '');
-  } catch (error) {
-    if (error.status !== 401) select('#error').textContent = error.message;
-  }
-}
-
-for (const action of ['start', 'save']) select('#sandbox-' + action).onclick = async () => {
-  try { await api('sandbox/' + action, {}); await refreshSandbox(); }
-  catch (error) { select('#error').textContent = error.message; }
-};
-
-select('#sandbox-connect').onclick = async () => {
-  try {
-    const device = await api('sandbox/auth/start', {});
-    const link = document.createElement('a');
-    link.href = device.url;
-    link.target = '_blank';
-    link.rel = 'noreferrer';
-    link.textContent = 'Open Sandbox device login';
-    select('#sandbox-device').replaceChildren(link, document.createTextNode(' — code ' + device.code));
-  } catch (error) { select('#error').textContent = error.message; }
-};
-
 select('#schedule').onsubmit = async (event) => {
   event.preventDefault();
   try {
@@ -203,7 +166,7 @@ select('#schedule').onsubmit = async (event) => {
 select('#login').onsubmit = async (event) => {
   event.preventDefault();
   const response = await fetch('/login', { method: 'POST', body: new FormData(event.target) });
-  if (response.ok) { event.target.reset(); await refresh(); await refreshJobs(); await refreshPermissions(); await refreshSchedules(); await refreshSandbox(); }
+  if (response.ok) { event.target.reset(); await refresh(); await refreshJobs(); await refreshPermissions(); await refreshSchedules(); }
   else select('#error').textContent = 'Sign-in failed';
 };
 
@@ -221,22 +184,9 @@ select('#cancel').onclick = async () => {
   catch (error) { select('#error').textContent = error.message; }
 };
 
-select('#connect').onclick = async () => {
-  try {
-    const device = await api('auth/start', {});
-    const link = document.createElement('a');
-    link.href = device.url;
-    link.target = '_blank';
-    link.rel = 'noreferrer';
-    link.textContent = 'Open device login';
-    select('#device').replaceChildren(link, document.createTextNode(' — code ' + device.code));
-  } catch (error) { select('#error').textContent = error.message; }
-};
-
 refresh();
 refreshJobs();
 refreshPermissions();
 refreshSchedules();
-refreshSandbox();
-setInterval(() => { refresh(); refreshJobs(); refreshPermissions(); refreshSchedules(); refreshSandbox(); }, 5000);
+setInterval(() => { refresh(); refreshJobs(); refreshPermissions(); refreshSchedules(); }, 5000);
 </script></html>`;

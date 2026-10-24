@@ -17,7 +17,6 @@ export interface PiRpcOptions {
   sessionFile?: string;
   tools: string[];
   agentDirectory: string;
-  subscriptionConfig?: string;
 }
 
 interface Pending {
@@ -35,8 +34,8 @@ interface PiRpcEvents {
 const extension = (name: string) => fileURLToPath(new URL(`./${name}`, import.meta.url));
 
 /**
- * A Pi RPC child that receives no prompt until our permission, usage, and (on Sandbox nodes)
- * subscription extensions confirm startup. Any extension failure stops the child.
+ * A Pi RPC child that receives no prompt until our permission and usage extensions confirm
+ * startup. Any extension failure stops the child.
  */
 export class PiRpc extends EventEmitter<PiRpcEvents> {
   readonly child: ChildProcessWithoutNullStreams;
@@ -49,20 +48,9 @@ export class PiRpc extends EventEmitter<PiRpcEvents> {
   private rejectReady: (error: Error) => void = () => {};
   private failure: Error | null = null;
 
-  constructor({
-    cwd,
-    sessionDirectory,
-    sessionFile,
-    tools,
-    agentDirectory,
-    subscriptionConfig,
-  }: PiRpcOptions) {
+  constructor({ cwd, sessionDirectory, sessionFile, tools, agentDirectory }: PiRpcOptions) {
     super();
-    this.requiredExtensions = new Set([
-      "optchat_permissions",
-      "optchat_usage",
-      ...(subscriptionConfig ? ["optchat_subscription"] : []),
-    ]);
+    this.requiredExtensions = new Set(["optchat_permissions", "optchat_usage"]);
     this.ready = new Promise((resolve, reject) => {
       this.resolveReady = resolve;
       this.rejectReady = reject;
@@ -94,7 +82,6 @@ export class PiRpc extends EventEmitter<PiRpcEvents> {
         ...(sessionFile ? ["--session", sessionFile] : []),
         "--extension",
         extension("usage.ts"),
-        ...(subscriptionConfig ? ["--extension", extension("sandbox-auth.ts")] : []),
         "--no-skills",
         "--no-prompt-templates",
         "--tools",
@@ -102,11 +89,7 @@ export class PiRpc extends EventEmitter<PiRpcEvents> {
       ],
       {
         cwd,
-        env: {
-          ...process.env,
-          PI_CODING_AGENT_DIR: agentDirectory,
-          ...(subscriptionConfig ? { OPTCHAT_NODE_CONFIG: subscriptionConfig } : {}),
-        },
+        env: { ...process.env, PI_CODING_AGENT_DIR: agentDirectory },
         stdio: ["pipe", "pipe", "pipe"],
       },
     );

@@ -14,7 +14,7 @@ import { DirectoryBucket } from "./bucket.ts";
 import { linkInbox, type InboxLinkOptions } from "./inbox-link.ts";
 import { scheduleBackups, type RemoteBucket } from "./backup.ts";
 
-/** A relayed model request may carry 20 MiB of images; the cloud allowed 32 MiB messages. */
+/** A node message may carry a large report or review; the cloud allowed 32 MiB messages. */
 const MAX_MESSAGE_BYTES = 32 * 1024 * 1024;
 /** setTimeout fires at once when asked to wait longer than this. */
 const MAX_TIMER_MS = 2_147_483_647;
@@ -26,8 +26,8 @@ export interface LocalMasterOptions {
   /** 0 picks a free port. The Master listens on 127.0.0.1 only. */
   port: number;
   config: MasterConfig;
-  callModel: NonNullable<MasterHost["callModel"]>;
-  runCode?: MasterHost["runCode"];
+  callModel: MasterHost["callModel"];
+  runCode: MasterHost["runCode"];
   /** The Worker's inbox, which holds the owner's messages while the laptop is away. */
   inbox?: Omit<InboxLinkOptions, "deliver">;
   /** Where the daily snapshot and changed bucket files go, from `hour` (3) in the owner's zone. */
@@ -212,7 +212,7 @@ export async function startMaster(options: LocalMasterOptions): Promise<LocalMas
     },
     config: options.config,
     callModel: options.callModel,
-    ...(options.runCode ? { runCode: options.runCode } : {}),
+    runCode: options.runCode,
   });
 
   const nodes = new WebSocketServer({
@@ -257,11 +257,16 @@ export async function startMaster(options: LocalMasterOptions): Promise<LocalMas
       master.connectNode(machine, () => {
         const local: LocalSocket = new LocalSocket(socket, () => sockets.delete(local));
         sockets.set(local, machine);
+        // One message at a time, in order, as a Durable Object delivers them: a repeated report
+        // must not overtake the first while it is being saved.
+        let handled = Promise.resolve();
         socket.on("message", (data) => {
           const bytes = Array.isArray(data)
             ? Buffer.concat(data)
             : Buffer.from(new Uint8Array(data));
-          void master.webSocketMessage(local, bytes.toString("utf8"));
+          handled = handled
+            .then(() => master.webSocketMessage(local, bytes.toString("utf8")))
+            .catch((error: unknown) => console.error(errorMessage(error)));
         });
         socket.on("close", () => {
           if (sockets.delete(local)) master.webSocketClose(local);
