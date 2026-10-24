@@ -1,17 +1,14 @@
-# OptChat memory over all local agent logs, on Cloudflare
+# OptChat memory over all local agent logs
 
-Goal: one always-on master agent in a Durable Object, whose memory is a
+Goal: one master agent whose memory is a
 [Taelin OptChat](https://gist.github.com/VictorTaelin/91837951a5ce5b38f341ec1ba1df6449) tree. The
-master spawns **Pi sessions as subagents** on any connected machine (this laptop, a home server, or
-a Cloudflare Sandbox container). History from every past Codex, Claude Code, Prime, and Pi session
+master spawns **Pi sessions as subagents** on any connected machine (this laptop or a home server)
+and coding threads in T3 Code. History from every past Codex, Claude Code, Prime, and Pi session
 seeds the memory. Model calls use the ChatGPT Pro subscription; there is no API key or AI Gateway.
 
 This follows the gist's own design: §9's master that spawns subagents and logs only their reports,
-and §10's always-on host. The Durable Object is that host, and Pi's RPC mode is the subagent
-runtime.
-
-Since 2026-10-24 the Master runs on the laptop, and the Durable Object is parked; Cloudflare is to
-keep a backup and an inbox. See
+and §10's always-on host. The host began as a Durable Object; since 2026-10-24 it is the laptop, and
+Pi's RPC mode is the subagent runtime. Cloudflare keeps an inbox and the backup. See
 [Direction: a local Master](#direction-a-local-master-decided-2026-10-24).
 
 ## Status
@@ -21,12 +18,12 @@ keep a backup and an inbox. See
 | 0. Corpus measurement                 | Done                                                                                                                                                                                                                                                                                                                      |
 | 1. Normalizer and redaction           | Done 2026-10-05, with zero Gitleaks findings after redaction                                                                                                                                                                                                                                                              |
 | 2. Local memory prototype (one month) | Done 2026-10-09. Three complete trees of one month's messages. Retrieval, 10 questions answered by Sol with zoom, date and search, graded by Sol: Luna on gist `3c190e0` 9/10 in 28 tool calls, Luna on `f51fe5c` 8.5/10 in 42, Sol on `f51fe5c` 10/10 in 32. Every miss said it could not find the answer; none guessed. |
-| 3. Master Durable Object              | Deployed: log, tree, compactor, turn loop, web and terminal chat, model relay through the laptop. History imported 2026-10-10 with no failing nodes; all main and subagent transcripts are in R2.                                                                                                                         |
+| 3. Master                             | Log, tree, compactor, turn loop, web and terminal chat. History imported 2026-10-10 with no failing nodes. Ran as a Durable Object until it moved to the laptop on 2026-10-24 (L1–L5 below).                                                                                                                              |
 | 4. Laptop node and spawn              | Deployed: daemon under launchd, Pi RPC tasks, per-call owner approval, steering, abort, report outbox, task recovery, R2 audit, quota ledger                                                                                                                                                                              |
-| 5. More nodes                         | Sandbox fallback deployed; home server not set up; live ingest on since 2026-10-11, following hand-run sessions from the import's end                                                                                                                                                                                     |
+| 5. More nodes                         | Home server not set up; live ingest on since 2026-10-11, following hand-run sessions from the import's end. The Sandbox fallback was removed in L5.                                                                                                                                                                       |
 | 6. Muse behaviour                     | Scheduled prompts and Code Mode deployed; Telegram/Discord and gated self-redeploy not started                                                                                                                                                                                                                            |
 
-**Next:** L5 of the local Master (below).
+**Next:** a first restore from the R2 backup (see Open issues).
 
 ## Direction: a chief of staff over t3code (decided 2026-10-10)
 
@@ -53,8 +50,7 @@ requests.
 
 Rules that carry over: approvals of a thread's tool calls go to the owner, never to the model,
 because the Master reads untrusted logs; t3code calls sit behind one adapter pinned to a version,
-since its API is young; the node daemon keeps log ingest and the model relay, and t3code replaces
-its Pi task runner.
+since its API is young; the node daemon keeps log ingest, and t3code replaces its Pi task runner.
 
 ## Direction: a local Master (decided 2026-10-24)
 
@@ -77,13 +73,13 @@ hop costs more than it gives:
 What Cloudflare still does well is hold a copy off the laptop and take a message while the laptop
 sleeps, so it keeps those two jobs.
 
-| Step | Work                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| L1   | **Host seam.** The Master's logic moves to `src/master.ts` behind a `MasterHost`: SQL, key-value settings and one alarm, a bucket for transcripts, images and audit, node sockets, the model call, and optional Code Mode and Sandbox. Every Cloudflare type stays in `src/worker.ts`, whose Durable Object becomes an adapter with no change in behaviour.                                                                                                                                                             |
-| L2   | **Local host.** Done: `node/master.ts` runs the same Master on the laptop. It uses `node:sqlite` and files in `data/master/`, a timer for the alarm, and the laptop's own Codex or Pi login for model calls, with no relay. It serves the owner API, the page and the node WebSocket on 127.0.0.1 behind the owner key. Code Mode scripts run in a child Node process under the permission model (no files, network, DNS, processes, workers or environment), 20 seconds at most.                                       |
-| L3   | **Move.** Done 2026-10-24. An Access application on the Worker admits the owner and the laptop's service token. The Durable Object was parked (it answers 410 outside `/api/export/`, with no alarm and no sockets) and exported: 27 tables matched by count, including 21,631 messages and 43,252 nodes, and 9,092 objects (11 GB) matched by size. `com.anhdao.optchat-master` serves it from `data/master/`; chat, the ACP agent, live ingest and the node daemon point at it. The old data stays in place until L5. |
-| L4   | **Backup and inbox.** Done 2026-10-24; see below. A message left in the live inbox reached the local Master on connect and its reply was posted to T3 Code. The first backup sent a 32.6 MB snapshot and 125 changed files (234 MB), counting 9,091 files already in R2.                                                                                                                                                                                                                                                |
-| L5   | **Remove.** Delete the Master Durable Object class (with a migration), the Sandbox and its container, the relay, the Worker Loader binding and the Master's own device login.                                                                                                                                                                                                                                                                                                                                           |
+| Step | Work                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| L1   | **Host seam.** The Master's logic moves to `src/master.ts` behind a `MasterHost`: SQL, key-value settings and one alarm, a bucket for transcripts, images and audit, node sockets, the model call, and optional Code Mode and Sandbox. Every Cloudflare type stays in `src/worker.ts`, whose Durable Object becomes an adapter with no change in behaviour.                                                                                                                                                                                                                                                          |
+| L2   | **Local host.** Done: `node/master.ts` runs the same Master on the laptop. It uses `node:sqlite` and files in `data/master/`, a timer for the alarm, and the laptop's own Codex or Pi login for model calls, with no relay. It serves the owner API, the page and the node WebSocket on 127.0.0.1 behind the owner key. Code Mode scripts run in a child Node process under the permission model (no files, network, DNS, processes, workers or environment), 20 seconds at most.                                                                                                                                    |
+| L3   | **Move.** Done 2026-10-24. An Access application on the Worker admits the owner and the laptop's service token. The Durable Object was parked (it answers 410 outside `/api/export/`, with no alarm and no sockets) and exported: 27 tables matched by count, including 21,631 messages and 43,252 nodes, and 9,092 objects (11 GB) matched by size. `com.anhdao.optchat-master` serves it from `data/master/`; chat, the ACP agent, live ingest and the node daemon point at it. The old data stays in place until L5.                                                                                              |
+| L4   | **Backup and inbox.** Done 2026-10-24; see below. A message left in the live inbox reached the local Master on connect and its reply was posted to T3 Code. The first backup sent a 32.6 MB snapshot and 125 changed files (234 MB), counting 9,091 files already in R2.                                                                                                                                                                                                                                                                                                                                             |
+| L5   | **Remove.** Done 2026-10-24. The deploy reconciled the Master and Sandbox classes as deleted, with their data; their tombstones stay in `cloudflare.config.ts` until a deploy lists them as removable. The `optchat-pi` container application and its 21 image tags were deleted. The Worker serves only the inbox page, its sign-in, `/api/inbox`, `/master/inbox` and `/backup/*`, and the relay, the Worker Loader binding and the Master's device login are gone. The Master's tests now run on the local host; porting them showed it handled a node's messages concurrently, and it now handles them in order. |
 
 L4 in detail:
 
@@ -147,15 +143,16 @@ prototype.
 - **Restoring from R2** is by hand: gunzip the newest snapshot into `data/master/master.sqlite` and
   copy the bucket's keys, except `snapshots/` and `backups/`, into `data/master/bucket/`. No restore
   has been tried.
-- **Not yet verified live:** subscription credential refresh, recovery of a turn interrupted
-  mid-call, abort during model streaming, and loss of an unsaved Sandbox workspace.
+- **Not yet verified live:** model calls after the Codex CLI's access token expires while the Master
+  runs, recovery of a turn interrupted mid-call, and abort during model streaming.
+- **Tombstones.** `Master` and `Sandbox` stay in `cloudflare.config.ts` as deleted exports until a
+  deploy reports them removable.
 - **Posted replies** go to the inbox of the first signed-in computer that takes them, so a second
   computer gets its own inbox only while the first is offline. Repeated posts are no-ops by request
   id, but an inbox that refuses a post is replaced, so a passing T3 Code error can leave a second
   inbox. Five failed tries leave a post unsent, with its reason in `/api/posts`.
-- **Images** go to the model inline on every step of their turn (up to 20 MiB a message, inside the
-  relay's 32 MiB WebSocket limit); memory keeps only the `[image key]` marker and the reply's words.
-  The web page cannot attach images yet.
+- **Images** go to the model inline on every step of their turn (up to 20 MiB a message); memory
+  keeps only the `[image key]` marker and the reply's words. The web page cannot attach images yet.
 - **Spoken replies:** T3 Code has dictation but no text-to-speech, so replies are read, not heard.
 - **Node keys** are stored and compared in plaintext SQLite; hash them before adding more nodes.
 - **Schema changes** are applied with column probes in each constructor; move to a versioned
@@ -169,9 +166,9 @@ prototype.
 **Deviations from the gist:**
 
 1. Sessions are concatenated by start time, each contiguous.
-2. Secrets are redacted locally (pattern rules plus Gitleaks) before anything reaches Cloudflare. T3
-   Code thread text is the exception: it reaches the Worker directly, so the Worker redacts it with
-   the same pattern rules (`src/redact.ts`), without Gitleaks.
+2. Secrets are redacted (pattern rules plus Gitleaks) before anything enters memory or the bucket.
+   T3 Code thread text is the exception: it reaches the Master directly, so the Master redacts it
+   with the same pattern rules (`src/redact.ts`), without Gitleaks.
 3. A `search` tool (FTS5 over summaries) sits next to `zoom` and `date`; the spec allows only zoom.
    The system prompt says to zoom into a hit before relying on it.
 4. A failed node retries after 10 seconds rather than at the next message, so a bulk import keeps
@@ -184,8 +181,8 @@ prototype.
    wait could last minutes or never end. While a turn waits, merges are held back and the compactor
    builds leaves only. A line still missing then shows its kind and size instead of its text,
    `(not summarized yet: echo, 9000 bytes; zoom(41, 1) reads it)`, so no call sees half a message.
-   The compactor runs beside turns, and any wake ends the alarm's wait on it, since Durable Object
-   alarms do not overlap.
+   The compactor runs beside turns, and any wake ends the alarm's wait on it, since alarm runs do
+   not overlap.
 
 Everything else follows revision `3c190e0`: the batched view (128 KB down to 64 KB), the
 compactions' own 16–32 KB view, the merge rule `(T - last) / 2^l` (tested against Taelin's push),
@@ -196,68 +193,53 @@ changes. Prompt caching needs a `session-id` header; with `prompt_cache_key` alo
 cached nothing (probed).
 
 **Model access.** chatgpt.com refuses bulk calls from Cloudflare's network: during the first history
-batch (2026-10-09), compactions from the Master got non-JSON 403s and fell to about one node a
-minute, while the laptop only ever saw 429s. So a node with `"models": true` in its configuration
-serves the Master's model calls, turns and compactions alike, over its WebSocket (`model_request` /
-`model_result`), with that machine's Codex or Pi login. Without such a node online, the Master calls
-`chatgpt.com/backend-api` itself with its own device login, rotating its refresh token in Durable
-Object storage. Each node uses its own Pi login, and the Sandbox's Durable Object is the only writer
-of its refresh token. The Claude subscription is usable only through Claude Code itself, so it is
-not a cloud path.
+batch (2026-10-09), compactions from the cloud Master got non-JSON 403s and fell to about one node a
+minute, while the laptop only ever saw 429s. That led first to a relay through the laptop and then
+to moving the Master there. The Master calls `chatgpt.com/backend-api` with the laptop's Codex CLI
+token, or Pi's login, and never rotates either; each node uses its own Pi login. The Claude
+subscription is usable only through Claude Code itself, so it is not a path for the Master.
 
-**Durable Object budget.** Duration is billed as 128 MB of wall-clock time while an object is active
-or cannot hibernate. The paid plan includes 400,000 GB-s a month, and use beyond that is billed in
-whole millions at $12.50 each. The Master awake all month is 324,000 GB-s, so it fits, but a second
-object awake all month does not. Every other object class therefore idles to nothing: sockets use
-the Hibernation API, alarms stop when there is no work, and long work runs in containers or on the
-owner's computers rather than in a waiting object. The Sandbox does this: its alarm ends when its
-container saves after 2 idle minutes.
+**Cloudflare budget.** Only the `Inbox` Durable Object remains. Pings get an automatic response, so
+it stays hibernated between messages and bills almost no duration; the backup goes to R2 through the
+Worker.
 
-**Subagents cost time, not objects.** The Master already fans out: any number of T3 Code threads
-(`launch`), helpers (`delegate`) and Pi tasks (`spawn`) run at once on the owner's computers or in
-the Sandbox, each reporting back as a `work` message, and a T3 Code thread can start its own child
-agents with T3 Code's `delegate_task`. None of that adds Durable Object duration. Subagent loops
-that must run in the cloud should run as concurrent loops inside the Master, which shares one
-object's duration across everything it does at once; a separate object per subagent is only for
-isolation (its own memory or permissions) and must hibernate when idle. Either way the limit is
-model access: cloud calls go through the laptop relay and its subscription's rate limits.
+**Subagents cost time.** The Master fans out: any number of T3 Code threads (`launch`), helpers
+(`delegate`) and Pi tasks (`spawn`) run at once on the owner's computers, each reporting back as a
+`work` message, and a T3 Code thread can start its own child agents with T3 Code's `delegate_task`.
+The limit is the subscription's rate limits.
 
 **Compactor probe (2026-10-04).** 24 real messages through the earlier COMPACT prompt on Sol: 0
 refusals, 6 lines over 512 bytes by 1–44 bytes, which the retry loop handles.
 
 ## Architecture
 
-This is the cloud layout, which L5 removes. Since L3 the same Master runs on the laptop
-(`node/master.ts`, SQLite and a directory for the bucket), makes its own model calls, and the node
-daemon connects to it on 127.0.0.1.
-
 ```
-            you: web chat / terminal (only you; one log, one writer)
-                              ▼
-┌──────────────── Cloudflare ─────────────────────────────────────────┐
-│ Worker: owner auth                                                   │
-│ Durable Object "Master" (always addressable, wakes on msg/alarm)     │
-│   SQLite: log, tree, FTS5, quota ledger, machines, spawns, turns     │
-│   compactor pump (alarms, 8 jobs, pauses at 80% of either window)    │
-│   turn loop beside it: view + message → ChatGPT backend              │
-│   tools: zoom, date, session, search, transcript, machines, spawn,   │
-│          tell, abort, schedule(s), codemode                          │
-│ R2: transcripts, audit log, Sandbox workspace backups                │
-└────────────▲───────────────────────▲─────────────────────▲──────────┘
-             │ outbound WebSocket    │                     │
-     node daemon (laptop)    node daemon (server)   Sandbox container
-       pi --mode rpc            pi --mode rpc         pi --mode rpc
-       live ingest + redaction
+   you: web page / terminal / T3 Code (ACP), and the phone through T3 Connect
+                                  ▼
+┌──────────── laptop ───────────────────────────────────────────────────┐
+│ Master: node/master.ts under launchd, on 127.0.0.1:8790               │
+│   SQLite: log, tree, FTS5, quota ledger, machines, spawns, turns      │
+│   compactor pump (8 jobs, pauses at 80% of either quota window)       │
+│   turn loop beside it: view + message → ChatGPT backend               │
+│   tools: memory, schedules, codemode, spawn, T3 Code threads, helpers │
+│   bucket: data/master/bucket (transcripts, images, audit)             │
+│ node daemon: pi --mode rpc, live ingest + redaction                   │
+│ T3 Code: threads and helpers, reached over MCP                        │
+└──────────┬────────────────────────────────────────────────────────────┘
+           │ outbound: /master/inbox WebSocket and /backup/*
+┌──────────▼──── Cloudflare, behind Access ─────────────────────────────┐
+│ Worker: inbox page, owner sign-in, backup routes                      │
+│ Durable Object "Inbox": the owner's messages while the laptop is away │
+│ R2: daily database snapshots and a copy of the bucket                 │
+└───────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Model relay:** the laptop node makes the Master's model calls, since the backend refuses bulk
-  calls from Cloudflare.
-- **Node daemon:** connects out over a hibernatable WebSocket, runs approved tasks as
-  `pi --mode rpc` in an allowed directory, and sends one report per task after local redaction.
-  `tell` maps to Pi steering and `abort` to Pi abort.
-- **Durable turns:** each step of a turn is saved in SQLite, so an eviction resumes mid-turn.
-  Messages sent during a turn join it at the next tool boundary.
+- **Node daemon:** connects out over a WebSocket, runs approved tasks as `pi --mode rpc` in an
+  allowed directory, and sends one report per task after local redaction. `tell` maps to Pi steering
+  and `abort` to Pi abort. The Master handles each node's messages one at a time, in order.
+- **Durable turns:** each step of a turn is saved in SQLite, so a restart resumes mid-turn. Messages
+  sent during a turn join it at the next tool boundary.
 - **Security:** only the owner can start turns. Each node has its own key and directory allowlist;
   Pi `bash`, `edit`, and `write` calls wait for owner approval after a local secret scan; every
-  spawn and decision is audited in R2. A public persona would need a separate Durable Object without
+  spawn and decision is audited in the bucket. A public persona would need a separate Master without
   `spawn`.
