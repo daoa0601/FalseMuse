@@ -1140,14 +1140,17 @@ export class Master {
         return this.nodes.list();
       case "computers":
         return this.computers.overview();
-      case "launch":
+      case "launch": {
+        const computer = requireString(args["computer"], "launch needs a computer");
         return this.computers.launch(
-          requireString(args["computer"], "launch needs a computer"),
+          computer,
           args["project"],
           requireString(args["title"], "launch needs a title"),
           requireString(args["task"], "launch needs a task"),
           callId,
+          await this.computers.choose(computer, args["provider"], args["model"]),
         );
+      }
       case "threads":
         return this.computers.threads(
           requireString(args["computer"], "threads needs a computer"),

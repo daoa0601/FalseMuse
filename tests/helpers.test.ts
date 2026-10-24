@@ -293,6 +293,27 @@ test("hiring checks the name, the computer, the instructions and the model", () 
     ]);
   }));
 
+test("a launch can name a model the computer offers, for a project with no default", () =>
+  withT3(async ({ computers, calls }) => {
+    await assert.rejects(computers.choose("laptop", "codex", ""), /both a provider and a model/);
+    await assert.rejects(
+      computers.choose("laptop", "codex", "gpt-5"),
+      /codex on laptop has no model gpt-5; it has gpt-6.1-sol, gpt-6-astra/,
+    );
+    assert.equal(await computers.choose("laptop", undefined, undefined), undefined);
+    const sol = await computers.choose("laptop", "codex", "gpt-6.1-sol");
+    await computers.launch("laptop", "optchat", "Health check", "Read the README.", "call-1", sol);
+    assert.deepEqual(calls.at(-1), {
+      name: "t3_thread_launch",
+      arguments: {
+        projectId: "p1",
+        title: "Health check",
+        message: "Read the README.",
+        modelSelection: { instanceId: "codex", model: "gpt-6.1-sol" },
+      },
+    });
+  }));
+
 test("a resumed turn's repeated job does not reach the thread it started a second time", () =>
   withT3(async ({ helpers, calls }) => {
     await helpers.hire({

@@ -51,8 +51,16 @@ const MASTER_TOOLS = [
   ),
   tool(
     "launch",
-    "Start a T3 Code thread in a project on a computer, with task as its first message. It runs with the access the user approved for you there, and asks the user in T3 Code before going beyond it. Its result comes back as a message starting [computer: title]. At most six threads run for you at once.",
-    { computer: string, project: string, title: string, task: string },
+    "Start a T3 Code thread in a project on a computer, with task as its first message. It runs with the access the user approved for you there, and asks the user in T3 Code before going beyond it. Its result comes back as a message starting [computer: title]. At most six threads run for you at once. provider and model name a provider instance and model that computers lists for the computer; leave them out for the project's default, and give them when the project has none.",
+    {
+      computer: string,
+      project: string,
+      title: string,
+      task: string,
+      provider: string,
+      model: string,
+    },
+    ["computer", "project", "title", "task"],
   ),
   tool("threads", "List the 20 newest T3 Code threads of a project on a computer.", {
     computer: string,

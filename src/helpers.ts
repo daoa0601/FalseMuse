@@ -124,7 +124,8 @@ export class Helpers {
     }
     const placed = earlier?.computer === computer && earlier.project === project;
     const sameModel = earlier?.provider === provider && earlier.model === model;
-    if (provider && model && !(placed && sameModel)) await this.offered(computer, provider, model);
+    if (provider && model && !(placed && sameModel))
+      await this.computers.choose(computer, provider, model);
     let thread = placed && input["fresh"] !== true ? (earlier.thread ?? null) : null;
     const wanted = selection({ provider, model });
     if (thread && !sameModel) {
@@ -159,22 +160,6 @@ export class Helpers {
       briefed,
     );
     return helper(this.row(name));
-  }
-
-  /** Refuse a provider instance or model the computer does not offer, naming what it does. */
-  private async offered(computer: string, provider: string, model: string): Promise<void> {
-    const providers = await this.computers.models(computer);
-    const entry = providers.find((candidate) => candidate.provider === provider);
-    if (!entry) {
-      throw new Error(
-        `${computer} has no provider ${provider}; it has ${providers.map((candidate) => candidate.provider).join(", ")}`,
-      );
-    }
-    if (!entry.models.includes(model)) {
-      throw new Error(
-        `${provider} on ${computer} has no model ${model}; it has ${entry.models.join(", ")}`,
-      );
-    }
   }
 
   /** The first message of a job in a thread that has not seen the helper's current instructions. */
