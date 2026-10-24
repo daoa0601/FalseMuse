@@ -17,6 +17,7 @@ export default defineConfig({
     exports: {
       Master: { type: "durable-object", storage: "sqlite" },
       Sandbox: { type: "durable-object", storage: "sqlite", container: sandbox },
+      Inbox: { type: "durable-object", storage: "sqlite" },
     },
     env: {
       TRANSCRIPTS: { type: "r2", name: "optchat-memory-transcripts" },

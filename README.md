@@ -102,7 +102,17 @@ Runs the Master on this computer at `http://127.0.0.1:8790`, with its database a
 `data/master/` and the same owner key as the cloud. It makes model calls with this computer's Codex
 or Pi login, and runs Code Mode scripts in a child Node process that Node's permission model keeps
 from files, network and other processes. An optional `data/master.json` sets `port`, `directory`,
-`masterModel`, `compactorModel`, `compactorEffort` and `timezone`.
+`masterModel`, `compactorModel`, `compactorEffort`, `timezone` and `backupHour`.
+
+With `worker` (the Worker's URL) in `data/cloud.json`, the Master also connects out to the Worker,
+through Access with `data/access-token.json`:
+
+- **Inbox.** The Worker's page takes a message while the laptop is away. The Master takes it as an
+  owner turn when it connects, and posts the reply to T3 Code.
+- **Backup.** Once a day from `backupHour` (default 3, in `timezone`), the Master sends a gzipped
+  snapshot of its database to `snapshots/master-<date>.sqlite.gz` in R2, keeping seven, and sends
+  every bucket file that changed under its own key. What was sent is recorded in
+  `data/master/backup.sqlite`.
 
 To move the cloud Master here, put Cloudflare Access's service token for the Worker in
 `data/access-token.json` (`client_id`, `client_secret`), then:

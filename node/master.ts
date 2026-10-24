@@ -6,14 +6,17 @@ import { isRecord, parseJson } from "../src/json.ts";
 import { runCode } from "./code-runner.ts";
 import { localAuth } from "./local-auth.ts";
 import { startMaster } from "./local-master.ts";
+import { workerBucket } from "./backup.ts";
 
 /**
  * Run the Master on this machine: `node node/master.ts [data/master.json]`. The file may set
- * `port`, `directory` and the MasterConfig fields; the owner key is OWNER_KEY in
- * data/owner-secrets.json, as for the cloud.
+ * `port`, `directory`, `backupHour` and the MasterConfig fields; the owner key is OWNER_KEY in
+ * data/owner-secrets.json, as for the cloud. With `worker` in data/cloud.json, the Master takes
+ * the Worker's inbox and backs up to it, through Access with data/access-token.json if present.
  */
 const DEFAULTS = {
   port: 8790,
+  backupHour: 3,
   directory: "data/master",
   masterModel: "gpt-6.1-sol",
   compactorModel: "gpt-6-luna",
@@ -47,6 +50,24 @@ const config: MasterConfig = {
   timezone: setting("timezone"),
 };
 
+/** The Worker that keeps the inbox and backup, and the headers that reach it as the owner. */
+function cloud(): { url: string; headers: Record<string, string> } | null {
+  const worker = existsSync("data/cloud.json") ? readObject("data/cloud.json")["worker"] : null;
+  if (typeof worker !== "string" || !worker) return null;
+  const headers: Record<string, string> = { authorization: `Bearer ${ownerKey}` };
+  if (existsSync("data/access-token.json")) {
+    const { client_id: id, client_secret: secret } = readObject("data/access-token.json");
+    if (typeof id !== "string" || typeof secret !== "string") {
+      throw new Error("data/access-token.json needs client_id and client_secret");
+    }
+    headers["cf-access-client-id"] = id;
+    headers["cf-access-client-secret"] = secret;
+  }
+  return { url: worker.replace(/\/$/, ""), headers };
+}
+const worker = cloud();
+if (!worker) console.log("No worker in data/cloud.json: the inbox and backup are off");
+
 let login: Promise<() => Promise<Credential>> | undefined;
 const master = await startMaster({
   directory: resolve(setting("directory")),
@@ -65,6 +86,12 @@ const master = await startMaster({
     return codexCall(await credential(), request);
   },
   runCode,
+  ...(worker
+    ? {
+        inbox: worker,
+        backup: { remote: workerBucket(worker.url, worker.headers), hour: setting("backupHour") },
+      }
+    : {}),
 });
 console.log(`The Master is listening on ${master.url}`);
 

@@ -11,6 +11,8 @@ import type { SqlDatabase } from "../src/database.ts";
 import { errorMessage, parseJson } from "../src/json.ts";
 import { openDatabase } from "./sqlite.ts";
 import { DirectoryBucket } from "./bucket.ts";
+import { linkInbox, type InboxLinkOptions } from "./inbox-link.ts";
+import { scheduleBackups, type RemoteBucket } from "./backup.ts";
 
 /** A relayed model request may carry 20 MiB of images; the cloud allowed 32 MiB messages. */
 const MAX_MESSAGE_BYTES = 32 * 1024 * 1024;
@@ -26,6 +28,10 @@ export interface LocalMasterOptions {
   config: MasterConfig;
   callModel: NonNullable<MasterHost["callModel"]>;
   runCode?: MasterHost["runCode"];
+  /** The Worker's inbox, which holds the owner's messages while the laptop is away. */
+  inbox?: Omit<InboxLinkOptions, "deliver">;
+  /** Where the daily snapshot and changed bucket files go, from `hour` (3) in the owner's zone. */
+  backup?: { remote: RemoteBucket; hour?: number; checkMs?: number; log?: (line: string) => void };
 }
 
 export interface LocalMaster {
@@ -273,16 +279,30 @@ export async function startMaster(options: LocalMasterOptions): Promise<LocalMas
   origin = `http://127.0.0.1:${address.port}`;
   // A restart resumes pending turns, schedules and the compactor at once.
   await storage.setAlarm(Date.now());
+  const inbox = options.inbox
+    ? linkInbox({ ...options.inbox, deliver: (message) => master.deliverInbox(message) })
+    : null;
+  const backups = options.backup
+    ? scheduleBackups({
+        ...options.backup,
+        snapshot: (target) => sql.exec("VACUUM INTO ?", target),
+        bucket: join(options.directory, "bucket"),
+        directory: options.directory,
+        timezone: options.config.timezone,
+      })
+    : null;
 
   return {
     url: origin,
     async close() {
+      inbox?.close();
       const stopped = alarm.stop();
       for (const socket of sockets.keys()) socket.close(1001, "The Master is stopping");
       nodes.close();
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await stopped;
+      await backups?.stop();
       sql.close();
     },
   };
