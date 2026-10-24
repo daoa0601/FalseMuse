@@ -215,7 +215,9 @@ def node_upload(config: dict):
             with urlopen(Request(config["url"] + path, data, {**headers, **extra}, method=method), timeout=60) as response:
                 response.read()
         except HTTPError as error:
-            raise OSError(f"{name}: {path.split('?')[0]} answered {error.code} {error.read()[:300].decode(errors='replace')}") from error
+            with error:
+                reason = error.read()[:300].decode(errors="replace")
+            raise OSError(f"{name}: {path.split('?')[0]} answered {error.code} {reason}") from error
 
     def upload(session: Session, transcript: Path, messages: list[dict]) -> None:
         name = session_name(session)
