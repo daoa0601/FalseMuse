@@ -82,8 +82,26 @@ sleeps, so it keeps those two jobs.
 | L1   | **Host seam.** The Master's logic moves to `src/master.ts` behind a `MasterHost`: SQL, key-value settings and one alarm, a bucket for transcripts, images and audit, node sockets, the model call, and optional Code Mode and Sandbox. Every Cloudflare type stays in `src/worker.ts`, whose Durable Object becomes an adapter with no change in behaviour.                                                                                                                                                             |
 | L2   | **Local host.** Done: `node/master.ts` runs the same Master on the laptop. It uses `node:sqlite` and files in `data/master/`, a timer for the alarm, and the laptop's own Codex or Pi login for model calls, with no relay. It serves the owner API, the page and the node WebSocket on 127.0.0.1 behind the owner key. Code Mode scripts run in a child Node process under the permission model (no files, network, DNS, processes, workers or environment), 20 seconds at most.                                       |
 | L3   | **Move.** Done 2026-10-24. An Access application on the Worker admits the owner and the laptop's service token. The Durable Object was parked (it answers 410 outside `/api/export/`, with no alarm and no sockets) and exported: 27 tables matched by count, including 21,631 messages and 43,252 nodes, and 9,092 objects (11 GB) matched by size. `com.anhdao.optchat-master` serves it from `data/master/`; chat, the ACP agent, live ingest and the node daemon point at it. The old data stays in place until L5. |
-| L4   | **Backup and inbox.** The Worker keeps the page and a hibernating Inbox object. A message sent while the laptop is offline queues there, and the local Master drains the queue when it connects, outbound, so no tunnel is needed. A nightly `VACUUM INTO` snapshot and any new files go to R2.                                                                                                                                                                                                                         |
+| L4   | **Backup and inbox.** Built; see below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | L5   | **Remove.** Delete the Master Durable Object class (with a migration), the Sandbox and its container, the relay, the Worker Loader binding and the Master's own device login.                                                                                                                                                                                                                                                                                                                                           |
+
+L4 in detail:
+
+- **Inbox.** An `Inbox` Durable Object in the Worker keeps messages in SQLite. The Worker's page
+  becomes an inbox: the owner writes a message, sees whether the laptop is connected, and sees what
+  was delivered. The local Master connects out to `/master/inbox` with the owner key and the Access
+  service token. The object sends each undelivered message, and the Master queues it once as an
+  owner turn (by message id) before acknowledging it. The reply is posted to T3 Code like a turn
+  nobody prompted for, so the phone is notified. Pings get an automatic response, so the object
+  stays hibernated between messages; the Master reconnects with backoff, as after sleep.
+- **Snapshot.** Once a day, at the first chance after 03:00 local time, the host runs `VACUUM INTO`
+  on a temporary file, gzips it, and uploads it in 32 MiB parts to
+  `snapshots/master-<date>.sqlite.gz` through owner routes `/backup/*` (R2 multipart). Seven are
+  kept.
+- **Files.** After the snapshot, bucket files whose size or modification time changed since their
+  last upload go to R2 under their own keys, so R2 stays a copy of the bucket. The first run counts
+  files already in R2 at the same size as uploaded. The record of uploads is
+  `data/master/backup.sqlite`, outside the snapshot.
 
 Decisions:
 
@@ -124,9 +142,11 @@ prototype.
   long and 3–6 times the output. Only 34 nodes were above level 3: re-measure on a larger import.
 - **Rate limits.** The backend answered 476 of 7,966 calls with 429 at 8 parallel jobs; failed nodes
   retry after 10 seconds.
-- **The Master depends on the laptop to think at full speed.** With the laptop off, it calls the
-  backend itself, which refuses bulk calls from Cloudflare (403); a chat turn may still get through.
-  A second model node (the home server) would remove the single point.
+- **With the laptop off there is no Master.** The inbox holds messages until it wakes. A home server
+  running `node/master.ts` would remove the single point.
+- **Restoring from R2** is by hand: gunzip the newest snapshot into `data/master/master.sqlite` and
+  copy the bucket's keys, except `snapshots/` and `backups/`, into `data/master/bucket/`. No restore
+  has been tried.
 - **Not yet verified live:** subscription credential refresh, recovery of a turn interrupted
   mid-call, abort during model streaming, and loss of an unsaved Sandbox workspace.
 - **Posted replies** go to the inbox of the first signed-in computer that takes them, so a second

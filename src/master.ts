@@ -252,6 +252,9 @@ export class Master {
     database.exec(
       "CREATE TABLE IF NOT EXISTS job_resumes (id TEXT PRIMARY KEY, job TEXT NOT NULL)",
     );
+    database.exec(
+      "CREATE TABLE IF NOT EXISTS inbox_turns (id TEXT PRIMARY KEY, turn INTEGER NOT NULL)",
+    );
     this.routes = this.ownerRoutes();
   }
 
@@ -641,7 +644,12 @@ export class Master {
    * wrote during the turn and so reads it already, or the Master chose to stay quiet.
    */
   private postTitle(turn: Turn): string | null {
-    if (turn.kind === "user") return null;
+    if (
+      turn.kind === "user" &&
+      !this.sql.rows("SELECT 1 FROM inbox_turns WHERE turn=?", turn.id).length
+    ) {
+      return null;
+    }
     if (this.sql.rows("SELECT 1 FROM turns WHERE reply_to=? AND kind='user'", turn.id).length) {
       return null;
     }
@@ -742,6 +750,31 @@ export class Master {
     const current = await this.host.storage.getAlarm();
     const target = Date.now() + delay;
     if (current === null || target < current) await this.host.storage.setAlarm(target);
+  }
+
+  /**
+   * Queue a message the owner left in the Worker's inbox as their turn, once however often it is
+   * delivered. Nobody watches the reply here, so it is posted to T3 Code.
+   */
+  async deliverInbox(message: { id: string; text: string; sent: string }): Promise<number> {
+    const turn = this.sql.transaction(() => {
+      const [earlier] = this.sql.rows<{ turn: number }>(
+        "SELECT turn FROM inbox_turns WHERE id=?",
+        message.id,
+      );
+      if (earlier) return earlier.turn;
+      this.sql.exec(
+        "INSERT INTO turns(text, status) VALUES (?, 'pending')",
+        `[Left in the inbox at ${message.sent}]\n${message.text}`,
+      );
+      const [{ id } = { id: 0 }] = this.sql.rows<{ id: number }>(
+        "SELECT last_insert_rowid() AS id",
+      );
+      this.sql.exec("INSERT INTO inbox_turns VALUES (?, ?)", message.id, id);
+      return id;
+    });
+    await this.wake();
+    return turn;
   }
 
   /** Called by the Sandbox before it saves and stops. */

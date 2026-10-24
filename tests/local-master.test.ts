@@ -5,7 +5,14 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { request as httpRequest } from "node:http";
 import { once } from "node:events";
-import { AlarmClock, startMaster, type LocalMaster } from "../node/local-master.ts";
+import { WebSocketServer, type WebSocket as ServerSocket } from "ws";
+import type { AddressInfo } from "node:net";
+import {
+  AlarmClock,
+  startMaster,
+  type LocalMaster,
+  type LocalMasterOptions,
+} from "../node/local-master.ts";
 import { runCode } from "../node/code-runner.ts";
 import type { ModelResult, RelayedRequest } from "../src/codex.ts";
 import { modelReply } from "./support.ts";
@@ -28,8 +35,9 @@ class TestMaster {
   answer: (request: RelayedRequest) => ModelResult | undefined = () => undefined;
   master: LocalMaster | undefined;
 
-  async start(): Promise<void> {
+  async start(extra: Pick<LocalMasterOptions, "inbox"> = {}): Promise<void> {
     this.master = await startMaster({
+      ...extra,
       directory: this.directory,
       ownerKey: OWNER,
       port: 0,
@@ -89,9 +97,12 @@ class TestMaster {
   }
 }
 
-async function withMaster(run: (master: TestMaster) => Promise<void>): Promise<void> {
+async function withMaster(
+  run: (master: TestMaster) => Promise<void>,
+  extra: Pick<LocalMasterOptions, "inbox"> = {},
+): Promise<void> {
   const master = new TestMaster();
-  await master.start();
+  await master.start(extra);
   try {
     await run(master);
   } finally {
@@ -294,3 +305,92 @@ test("the local Master calls the model itself even when a node offers to relay",
     );
     socket.close();
   }));
+
+/** The Worker's inbox socket as the local Master sees it, answering pings while `answering`. */
+async function fakeInbox() {
+  const server = new WebSocketServer({ port: 0, host: "127.0.0.1" });
+  await once(server, "listening");
+  const frames: string[] = [];
+  const sockets: ServerSocket[] = [];
+  const state = { answering: true, headers: [] as (string | undefined)[] };
+  server.on("connection", (socket, request) => {
+    sockets.push(socket);
+    state.headers.push(request.headers.authorization);
+    socket.on("message", (data) => {
+      const frame = String(data);
+      if (frame === "ping") {
+        if (state.answering) socket.send("pong");
+      } else frames.push(frame);
+    });
+  });
+  const until = async (done: () => boolean, what: string) => {
+    const deadline = Date.now() + 5_000;
+    while (!done()) {
+      assert.ok(Date.now() < deadline, what);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  };
+  return {
+    url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+    frames,
+    sockets,
+    state,
+    until,
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  };
+}
+
+test("an inbox message becomes one owner turn however often it arrives, and its reply is posted", async () => {
+  const inbox = await fakeInbox();
+  try {
+    await withMaster(
+      async (master) => {
+        await inbox.until(() => inbox.sockets.length === 1, "The Master did not connect");
+        assert.equal(inbox.state.headers[0], `Bearer ${OWNER}`);
+        const message = {
+          type: "message",
+          id: "0d9a6c1e-2b7f-4c1a-9e0b-6f2d3a4b5c6d",
+          text: "Book the dentist.",
+          sent: "2026-10-24T01:00:00.000Z",
+        };
+        inbox.sockets[0]?.send(JSON.stringify(message));
+        inbox.sockets[0]?.send(JSON.stringify(message));
+        inbox.sockets[0]?.send("not json");
+        await inbox.until(() => inbox.frames.length === 2, "The Master did not acknowledge");
+        const acks = inbox.frames.map((frame) => JSON.parse(frame) as { turn: number });
+        assert.deepEqual(acks[0], { type: "delivered", id: message.id, turn: acks[0]?.turn });
+        assert.equal(acks[1]?.turn, acks[0]?.turn);
+        const turn = await master.finished(acks[0]?.turn ?? 0);
+        assert.equal(turn.text, REPLY);
+        assert.match(
+          JSON.stringify(master.calls[0]?.input),
+          /\[Left in the inbox at 2026-10-24T01:00:00.000Z\]\\nBook the dentist\./,
+        );
+        const posts = await master.json<{ turn: number; title: string }[]>("/api/posts");
+        assert.deepEqual(
+          posts.map(({ turn: id, title }) => [id, title]),
+          [[acks[0]?.turn, REPLY]],
+        );
+      },
+      { inbox: { url: inbox.url, headers: { authorization: `Bearer ${OWNER}` } } },
+    );
+  } finally {
+    await inbox.close();
+  }
+});
+
+test("the inbox link replaces a connection that stops answering, as after the laptop sleeps", async () => {
+  const inbox = await fakeInbox();
+  try {
+    await withMaster(
+      async () => {
+        await inbox.until(() => inbox.sockets.length === 1, "The Master did not connect");
+        inbox.state.answering = false;
+        await inbox.until(() => inbox.sockets.length === 2, "The Master did not reconnect");
+      },
+      { inbox: { url: inbox.url, headers: {}, pingMs: 100, retryMs: [50, 50], log: () => {} } },
+    );
+  } finally {
+    await inbox.close();
+  }
+});

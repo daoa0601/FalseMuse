@@ -3,12 +3,32 @@ import type { SqlDatabase, SqlValue } from "./database.ts";
 import { executeCode } from "./codemode.ts";
 import * as core from "./master.ts";
 import { requireString } from "./json.ts";
+import { isOwner } from "./owner.ts";
+import { INBOX_PAGE } from "./inbox.ts";
+import { backupRoute } from "./backup-routes.ts";
 export { Sandbox } from "./sandbox.ts";
+export { Inbox } from "./inbox.ts";
 export { DirectoryBackupGateway } from "@cloudflare/sandbox";
 
 export default {
-  fetch: (request, env, ctx) =>
-    core.serve(request, env.OWNER_KEY, ctx.exports.Master.getByName("owner")),
+  async fetch(request, env, ctx) {
+    const path = new URL(request.url).pathname;
+    // The Master runs on the laptop; this Worker keeps its inbox and backup.
+    if (path === "/") {
+      return new Response(INBOX_PAGE, {
+        headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+      });
+    }
+    if (path === "/api/inbox" || path === "/master/inbox" || path.startsWith("/backup/")) {
+      if (!(await isOwner(request, env.OWNER_KEY))) {
+        return Response.json({ error: "Unauthorized" }, { status: 401 });
+      }
+      return path.startsWith("/backup/")
+        ? backupRoute(request, env.TRANSCRIPTS)
+        : ctx.exports.Inbox.getByName("owner").fetch(request);
+    }
+    return core.serve(request, env.OWNER_KEY, ctx.exports.Master.getByName("owner"));
+  },
 } satisfies ExportedHandler<Env>;
 
 /** The Master on Cloudflare: one Durable Object holds its SQLite, alarm and node sockets. */
