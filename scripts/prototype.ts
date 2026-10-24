@@ -12,7 +12,7 @@ import { cloudClient } from "./cloud-client.ts";
 const [month = "2026-09", model = "gpt-6-luna", callLimit = "30", quotaSource = "local", label] =
   process.argv.slice(2);
 if (quotaSource !== "local" && quotaSource !== "cloud") {
-  throw new Error("Use cloud to start from the deployed ledger's quota, or local");
+  throw new Error("Use cloud to start from the Master's ledger quota, or local");
 }
 if (label !== undefined && !/^[\w-]+$/.test(label)) throw new Error("A run label is a word");
 const effort = process.env["COMPACTOR_EFFORT"] ?? "high";

@@ -40,7 +40,7 @@ const MASTER_TOOLS = [
   tool("machines", "List the connected machines and allowed working directories.", {}),
   tool(
     "spawn",
-    "Propose a Pi task for owner approval. Omit machine to choose an online node, or the Sandbox when all nodes are offline. Omit cwd to use its first allowed root.",
+    "Propose a Pi task for owner approval. Omit machine to choose an online node. Omit cwd to use its first allowed root.",
     { task: string, machine: string, cwd: string },
     ["task"],
   ),

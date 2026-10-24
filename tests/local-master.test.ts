@@ -1,115 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { request as httpRequest } from "node:http";
 import { once } from "node:events";
 import { WebSocketServer, type WebSocket as ServerSocket } from "ws";
 import type { AddressInfo } from "node:net";
-import {
-  AlarmClock,
-  startMaster,
-  type LocalMaster,
-  type LocalMasterOptions,
-} from "../node/local-master.ts";
-import { runCode } from "../node/code-runner.ts";
-import type { ModelResult, RelayedRequest } from "../src/codex.ts";
-import { modelReply } from "./support.ts";
-
-const OWNER = "test-owner";
-const REPLY = "Answered on the laptop.";
-
-/** Test responses are JSON from the Master itself; assertions check the fields they read. */
-async function read<T>(response: Response): Promise<T> {
-  return (await response.json()) as T;
-}
-
-/**
- * A local Master in a temporary directory with the local Code Mode runner. Model calls get
- * `answer`'s result, REPLY when it has none.
- */
-class TestMaster {
-  readonly directory = mkdtempSync(join(tmpdir(), "optchat-master-"));
-  readonly calls: RelayedRequest[] = [];
-  answer: (request: RelayedRequest) => ModelResult | undefined = () => undefined;
-  master: LocalMaster | undefined;
-
-  async start(extra: Pick<LocalMasterOptions, "inbox"> = {}): Promise<void> {
-    this.master = await startMaster({
-      ...extra,
-      directory: this.directory,
-      ownerKey: OWNER,
-      port: 0,
-      config: {
-        masterModel: "gpt-6.1-sol",
-        compactorModel: "gpt-6-luna",
-        compactorEffort: "high",
-        timezone: "Europe/Helsinki",
-      },
-      callModel: async (request) => {
-        this.calls.push(request);
-        return this.answer(request) ?? modelReply(REPLY);
-      },
-      runCode,
-    });
-  }
-
-  get url(): string {
-    if (!this.master) throw new Error("The test Master is not running");
-    return this.master.url;
-  }
-
-  fetch(path: string, init?: RequestInit): Promise<Response> {
-    return fetch(this.url + path, init);
-  }
-
-  request(path: string, body?: unknown, method = body === undefined ? "GET" : "POST") {
-    return this.fetch(path, {
-      method,
-      headers: { authorization: `Bearer ${OWNER}`, "content-type": "application/json" },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    });
-  }
-
-  async json<T>(path: string, body?: unknown): Promise<T> {
-    const response = await this.request(path, body);
-    assert.ok(response.ok, `${path}: ${response.status} ${await response.clone().text()}`);
-    return read<T>(response);
-  }
-
-  /** Poll a turn until it leaves pending. */
-  async finished(id: number): Promise<{ status: string; text: string; steps: unknown[] }> {
-    const deadline = Date.now() + 5_000;
-    while (Date.now() < deadline) {
-      const turn = await this.json<{ status: string; text: string; steps: unknown[] }>(
-        `/api/turns/${id}`,
-      );
-      if (turn.status !== "pending") return turn;
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-    throw new Error(`Turn ${id} did not finish within five seconds`);
-  }
-
-  async stop(): Promise<void> {
-    await this.master?.close();
-    this.master = undefined;
-  }
-}
-
-async function withMaster(
-  run: (master: TestMaster) => Promise<void>,
-  extra: Pick<LocalMasterOptions, "inbox"> = {},
-): Promise<void> {
-  const master = new TestMaster();
-  await master.start(extra);
-  try {
-    await run(master);
-  } finally {
-    await master.stop();
-    rmSync(master.directory, { recursive: true, force: true });
-  }
-}
+import { AlarmClock } from "../node/local-master.ts";
+import { OWNER, REPLY, read, withMaster } from "./test-master.ts";
 
 test("the local Master answers the owner with its own model login and keeps the turn across a restart", () =>
   withMaster(async (master) => {
@@ -146,10 +42,7 @@ test("the local Master answers the owner with its own model login and keeps the 
         ["talk", REPLY],
       ],
     );
-    assert.equal(
-      (await master.json<{ authenticated: boolean }>("/api/status")).authenticated,
-      true,
-    );
+    assert.equal((await master.json<{ pending: number }>("/api/status")).pending, 0);
   }));
 
 test("a node connects over the local WebSocket, and a transcript uploaded in parts reads back", () =>
@@ -277,34 +170,6 @@ test("the local alarm waits past a timer's longest delay instead of firing early
   await later.stop();
   await clock.stop();
 });
-
-test("the local Master calls the model itself even when a node offers to relay", () =>
-  withMaster(async (master) => {
-    const { key } = await master.json<{ key: string }>("/api/nodes", {
-      name: "laptop",
-      roots: ["/tmp"],
-    });
-    await master.json("/api/nodes/laptop/models", { allowed: true });
-    const received: { type: string }[] = [];
-    const socket = new WebSocket(master.url.replace(/^http/, "ws") + "/node/ws", ["optchat", key]);
-    const ready = new Promise<void>((resolve) =>
-      socket.addEventListener("message", (event) => {
-        const message = JSON.parse(String(event.data)) as { type: string };
-        received.push(message);
-        if (message.type === "registered")
-          socket.send(JSON.stringify({ type: "node_ready", models: true }));
-        if (message.type === "ready") resolve();
-      }),
-    );
-    await ready;
-    const { id } = await master.json<{ id: number }>("/api/chat", { text: "Who answers?" });
-    assert.equal((await master.finished(id)).text, REPLY);
-    assert.deepEqual(
-      received.map((message) => message.type),
-      ["registered", "ready"],
-    );
-    socket.close();
-  }));
 
 /** The Worker's inbox socket as the local Master sees it, answering pings while `answering`. */
 async function fakeInbox() {

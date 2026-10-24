@@ -1,13 +1,13 @@
 import type { SqlDatabase } from "./database.ts";
-import type { ModelResult, RelayedRequest } from "./codex.ts";
+import type { ModelResult, BackendRequest } from "./codex.ts";
 
 /**
- * What the Master needs from the machine it runs on. A Durable Object provides it in
- * `src/worker.ts` and the laptop in `node/master.ts`; nothing else in `src/` names a platform.
+ * What the Master needs from the machine it runs on: the laptop provides it in
+ * `node/local-master.ts`, and nothing in `src/` names a platform.
  */
 export interface MasterHost {
   sql: SqlDatabase;
-  /** Small values the Master keeps outside its tables: instructions, logins, the last error. */
+  /** Small values the Master keeps outside its tables: instructions and the last error. */
   storage: Settings;
   /** Transcripts, images and the task audit. */
   bucket: Bucket;
@@ -16,14 +16,10 @@ export interface MasterHost {
   /** Keep work running after the request or alarm that started it returns. */
   waitUntil(work: Promise<unknown>): void;
   config: MasterConfig;
-  /**
-   * Call the model with the machine's own subscription login. Without it the Master calls through
-   * a node that serves models, else with the device login it keeps in storage.
-   */
-  callModel?: (request: RelayedRequest & { signal: AbortSignal }) => Promise<ModelResult>;
+  /** Call the model with the machine's own subscription login. */
+  callModel: (request: BackendRequest & { signal: AbortSignal }) => Promise<ModelResult>;
   /** Run a Code Mode script whose only outside access is `invoke`. */
-  runCode?: (code: string, invoke: CodeInvoke) => Promise<unknown>;
-  sandbox?: SandboxControl;
+  runCode: (code: string, invoke: CodeInvoke) => Promise<unknown>;
 }
 
 export interface MasterConfig {
@@ -45,7 +41,7 @@ export interface Settings {
   setAlarm(time: number): Promise<void>;
 }
 
-/** A node's connection; it carries the machine name and model flag it announced. */
+/** A node's connection; it carries the machine name it registered with. */
 export interface NodeSocket {
   send(message: string): void;
   close(code?: number, reason?: string): void;
@@ -87,24 +83,4 @@ export interface Bucket {
   ): Promise<unknown>;
   createMultipartUpload(key: string): Promise<MultipartUpload>;
   resumeMultipartUpload(key: string, uploadId: string): MultipartUpload;
-}
-
-/** The node configuration written into the Sandbox container for its daemon. */
-export interface SandboxNodeConfig {
-  name: string;
-  key: string;
-  roots: string[];
-  tools: string[];
-  url: string;
-  directory: string;
-  subscription: "cloud";
-}
-
-/** The cloud Sandbox, which only a Durable Object host has. */
-export interface SandboxControl {
-  status(): Promise<unknown>;
-  start(config: SandboxNodeConfig): Promise<unknown>;
-  save(): Promise<unknown>;
-  startLogin(): Promise<unknown>;
-  credential(): Promise<unknown>;
 }

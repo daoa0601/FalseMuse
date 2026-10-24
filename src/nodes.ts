@@ -1,4 +1,4 @@
-import { hasColumn, type SqlDatabase } from "./database.ts";
+import type { SqlDatabase } from "./database.ts";
 import { isRecord, parseJson } from "./json.ts";
 import type { CloudMessage, Job, ReportMessage } from "./protocol.ts";
 import type { Bucket, MasterHost, NodeSocket } from "./host.ts";
@@ -17,10 +17,6 @@ export interface MachineStatus {
   roots: string[];
   tools: string[];
   online: boolean;
-  /** The owner allowed this machine to serve model calls. */
-  models: boolean;
-  /** It is connected and announced that it serves them. */
-  serving: boolean;
 }
 
 export interface Registration {
@@ -50,10 +46,8 @@ export class Nodes {
     database.exec(
       "CREATE TABLE IF NOT EXISTS machines (name TEXT PRIMARY KEY, key TEXT NOT NULL UNIQUE, roots TEXT NOT NULL, tools TEXT NOT NULL)",
     );
-    // Serving model calls is the owner's grant: a model node reads memory and writes turns.
-    if (!hasColumn(database, "machines", "models")) {
-      database.exec("ALTER TABLE machines ADD COLUMN models INTEGER NOT NULL DEFAULT 0");
-    }
+    // The cloud Sandbox registered itself under this name and root; it no longer exists.
+    database.exec(`DELETE FROM machines WHERE name='sandbox' AND roots='["/workspace/repo"]'`);
     database.exec(
       "CREATE TABLE IF NOT EXISTS spawns (id TEXT PRIMARY KEY, machine TEXT, cwd TEXT, task TEXT, view TEXT, status TEXT, report TEXT)",
     );
@@ -86,19 +80,6 @@ export class Nodes {
       JSON.stringify(tools),
     );
     return { name, key, roots: stringList(roots), tools: stringList(tools) };
-  }
-
-  /** Let a machine serve the Master's model calls. The Sandbox never may: it runs Pi with bash. */
-  allowModels(name: string, allowed: unknown): { name: string; models: boolean } {
-    if (typeof allowed !== "boolean") throw new Error("Send allowed: true or false");
-    if (name === "sandbox") throw new Error("The Sandbox cannot serve model calls");
-    if (!this.machine(name)) throw new Error(`No machine ${name}`);
-    this.database.exec("UPDATE machines SET models=? WHERE name=?", allowed ? 1 : 0, name);
-    return { name, models: allowed };
-  }
-
-  servesModels(name: string): boolean {
-    return this.database.rows("SELECT 1 FROM machines WHERE name=? AND models=1", name).length > 0;
   }
 
   machine(name: string): Machine | undefined {
@@ -134,25 +115,13 @@ export class Nodes {
 
   list(): MachineStatus[] {
     return this.database
-      .rows<Omit<Machine, "key"> & { models: number }>(
-        "SELECT name, roots, tools, models FROM machines",
-      )
-      .map((machine) => {
-        const sockets = this.sockets.getWebSockets(machine.name);
-        return {
-          name: machine.name,
-          roots: stringList(parseJson(machine.roots)),
-          tools: stringList(parseJson(machine.tools)),
-          online: sockets.length > 0,
-          models: machine.models === 1,
-          serving:
-            machine.models === 1 &&
-            sockets.some((socket) => {
-              const attachment: unknown = socket.deserializeAttachment();
-              return isRecord(attachment) && attachment["models"] === true;
-            }),
-        };
-      });
+      .rows<Omit<Machine, "key">>("SELECT name, roots, tools FROM machines")
+      .map((machine) => ({
+        name: machine.name,
+        roots: stringList(parseJson(machine.roots)),
+        tools: stringList(parseJson(machine.tools)),
+        online: this.sockets.getWebSockets(machine.name).length > 0,
+      }));
   }
 
   job(id: string): Job | undefined {
@@ -165,13 +134,6 @@ export class Nodes {
     );
   }
 
-  busy(machine: string): boolean {
-    return (
-      this.database.rows("SELECT 1 FROM spawns WHERE machine=? AND status='running'", machine)
-        .length > 0
-    );
-  }
-
   async propose(input: unknown, view: string, id: string = crypto.randomUUID()) {
     const existing = this.job(id);
     if (existing) return { id, status: existing.status };
@@ -181,8 +143,7 @@ export class Nodes {
     const target =
       typeof named === "string" && named
         ? machines.find((item) => item.name === named)
-        : (machines.find((item) => item.online) ??
-          machines.find((item) => item.name === "sandbox"));
+        : machines.find((item) => item.online);
     const cwd = typeof requested["cwd"] === "string" ? requested["cwd"] : target?.roots[0];
     if (
       !target ||
@@ -206,20 +167,9 @@ export class Nodes {
     return { id, status: "approval", message: "The owner must approve this task in the web chat" };
   }
 
-  async approve(id: string, startSandbox?: () => Promise<unknown>) {
+  async approve(id: string) {
     const job = this.job(id);
     if (!job || job.status !== "approval") throw new Error("No pending task with that id");
-    if (
-      job.machine === "sandbox" &&
-      !this.sockets.getWebSockets(job.machine).length &&
-      startSandbox
-    ) {
-      await startSandbox();
-      const deadline = Date.now() + 10_000;
-      while (!this.sockets.getWebSockets(job.machine).length && Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-    }
     const [socket] = this.sockets.getWebSockets(job.machine);
     if (!socket) throw new Error(`Machine ${job.machine} is offline`);
     await this.audit(id, "approved");

@@ -6,7 +6,7 @@ const directory = resolve("data/node-agent");
 mkdirSync(directory, { recursive: true });
 const device = await startDeviceLogin();
 console.log(`Open https://auth.openai.com/codex/device and enter ${device.user_code}`);
-console.log("This login belongs to this node only. The cloud has a separate login.");
+console.log("This login is for Pi tasks on this node.");
 while (true) {
   const credential = await pollDeviceLogin(device);
   if (credential) {

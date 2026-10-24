@@ -12,12 +12,6 @@ importers:
 
   .:
     dependencies:
-      '@cloudflare/codemode':
-        specifier: 0.5.3
-        version: 0.5.3(zod@4.6.7)
-      '@cloudflare/sandbox':
-        specifier: 1.0.0
-        version: 1.0.0
       ws:
         specifier: 8.22.0
         version: 8.22.0
@@ -151,23 +145,6 @@ packages:
   '@cloudflare/build-output-utils@0.8.5':
     resolution: {integrity: sha512-xnwcDCyBSErZeOj5eUy1gTrmVjwIY51TZ0Pz9W7mZqLGA3IkIckud7dNtFdGhKSXL2szfxBRbGM4R4qFE4SoPA==}
 
-  '@cloudflare/codemode@0.5.3':
-    resolution: {integrity: sha512-lrSAsBv20aMO+vu/Rn7I4Myhxvyn9krOmNUCV/oq2fuIMUyp1Ipt0Pf7WM1zS3MTrQ9BKAMVhEl/sKVSiHb71Q==}
-    peerDependencies:
-      '@modelcontextprotocol/sdk': ^1.25.0
-      '@tanstack/ai': '>=0.8.0 <1.0.0'
-      ai: ^6.0.0 || ^7.0.0
-      zod: 4.6.7
-    peerDependenciesMeta:
-      '@modelcontextprotocol/sdk':
-        optional: true
-      '@tanstack/ai':
-        optional: true
-      ai:
-        optional: true
-      zod:
-        optional: true
-
   '@cloudflare/codemods@0.4.0':
     resolution: {integrity: sha512-qeRpKNXtvqhTtagx/5cLmDaFx/voBhWJ1S6SdFdBkE3OtgcPVz+Q8MtIG26zltW9Z0Icsu2FGBxV5RFmuHI/Bg==}
     hasBin: true
@@ -181,9 +158,6 @@ packages:
 
   '@cloudflare/runtime-types@0.1.7':
     resolution: {integrity: sha512-avgC1wfTunbVea8HOq4ygiQ0WFQVNxcUHOQvH9TM47+0NTdsVTqB8rPQg6Tb5BfVkcWh/a0RAjk+Elr/h35mtQ==}
-
-  '@cloudflare/sandbox@1.0.0':
-    resolution: {integrity: sha512-+TZVuCey6OBDTvPLWisq4Ie7/R5Zy3zFyYOFCNRpdEIyQsKq3xwzpctonE43DfZ+wYZvvu6QYpR138PayDjF+A==}
 
   '@cloudflare/unenv-preset@2.16.2':
     resolution: {integrity: sha512-JBP1+Z7ZSNG/d4mRP+y8VC5dka3tZVMLEZRvS+rzQ4DGV1EoxRFQckcJTTkXbHSQiTj0DtNI01Zwb/V2fX0mvQ==}
@@ -983,9 +957,6 @@ packages:
   '@stablelib/base64@1.0.1':
     resolution: {integrity: sha512-1bnPQqSxSuc3Ii6MhBysoWCg58j97aUjuCSZrGSmDxNqtytIi0k8utUenAwTZN4V5mXXYGsVUI9zeBqy+jBOSQ==}
 
-  '@types/json-schema@7.0.15':
-    resolution: {integrity: sha512-5+fP8P8MFNC+AyZCDxrB2pkZFPGzqQWUzpSeuuVLvm8VMcorNYavBqoFcxK8bQz4Qsbn4oUEEem4wDLfcysGHA==}
-
   '@types/node@22.20.1':
     resolution: {integrity: sha512-EANqOCF9QFyra+4pfxUcX9STKJpCLjMbObVzljIJomAWSnuSIEAvyzEU53GaajbXJEgdh0iEcPL+DGvpUd4k1Q==}
 
@@ -995,11 +966,6 @@ packages:
   '@types/ws@8.18.1':
     resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
 
-  acorn@8.19.0:
-    resolution: {integrity: sha512-oJlA3XiRm7Cyk6qFD2Jn8ak9B7jSy0qy00ADO3+8dpT0LSjFihQYv4C02LFCSYJV3Q37xYwwRy5m+IpIiUzqWw==}
-    engines: {node: '>=0.4.0'}
-    hasBin: true
-
   agent-base@7.1.4:
     resolution: {integrity: sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==}
     engines: {node: '>= 14'}
@@ -1007,9 +973,6 @@ packages:
   agent-base@9.0.0:
     resolution: {integrity: sha512-TQf59BsZnytt8GdJKLPfUZ54g/iaUL2OWDSFCCvMOhsHduDQxO8xC4PNeyIkVcA5KwL2phPSv0douC0fgWzmnA==}
     engines: {node: '>= 20'}
-
-  aws4fetch@1.0.20:
-    resolution: {integrity: sha512-/djoAN709iY65ETD6LKCtyyEI04XIBP5xVvfmNxsEP0uJB5tyaGBztSryRr4HqMStr9R06PisQE7m9zDTXKu6g==}
 
   balanced-match@4.0.4:
     resolution: {integrity: sha512-BLrgEcRTwX2o6gGxGOCNyMvGSp35YofuYzw9h1IMTRmKqttAZZVU67bdb9Pr2vUHA8+j3i2tJfjO6C6+4myGTA==}
@@ -1633,13 +1596,6 @@ snapshots:
     dependencies:
       '@cloudflare/config': 0.23.0
 
-  '@cloudflare/codemode@0.5.3(zod@4.6.7)':
-    dependencies:
-      '@types/json-schema': 7.0.15
-      acorn: 8.19.0
-    optionalDependencies:
-      zod: 4.6.7
-
   '@cloudflare/codemods@0.4.0': {}
 
   '@cloudflare/config@0.23.0':
@@ -1656,11 +1612,6 @@ snapshots:
       - '@types/node'
       - bufferutil
       - utf-8-validate
-
-  '@cloudflare/sandbox@1.0.0':
-    dependencies:
-      aws4fetch: 1.0.20
-      zod: 4.6.7
 
   '@cloudflare/unenv-preset@2.16.2(unenv@2.0.0-rc.24)(workerd@1.20261001.1)':
     dependencies:
@@ -2217,8 +2168,6 @@ snapshots:
 
   '@stablelib/base64@1.0.1': {}
 
-  '@types/json-schema@7.0.15': {}
-
   '@types/node@22.20.1':
     dependencies:
       undici-types: 6.21.0
@@ -2229,13 +2178,9 @@ snapshots:
     dependencies:
       '@types/node': 22.20.1
 
-  acorn@8.19.0: {}
-
   agent-base@7.1.4: {}
 
   agent-base@9.0.0: {}
-
-  aws4fetch@1.0.20: {}
 
   balanced-match@4.0.4: {}
 

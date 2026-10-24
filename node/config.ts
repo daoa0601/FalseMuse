@@ -9,12 +9,7 @@ export interface NodeConfig {
   roots: string[];
   tools: string[];
   directory?: string;
-  subscription?: "cloud";
-  /** Path of this file, which Sandbox Pi extensions read for the subscription broker. */
-  subscriptionConfig?: string;
   ingest?: { baseline?: string };
-  /** Serve the Master's model calls with this machine's subscription login. */
-  models?: true;
 }
 
 const strings = (value: unknown): string[] | null =>
@@ -23,7 +18,7 @@ const strings = (value: unknown): string[] | null =>
 export function readNodeConfig(path: string): NodeConfig {
   const value: unknown = JSON.parse(readFileSync(path, "utf8"));
   if (!isRecord(value)) throw new Error(`${path} is not a node configuration`);
-  const { name, key, url, directory, subscription, ingest, models } = value;
+  const { name, key, url, directory, ingest } = value;
   const roots = strings(value["roots"]);
   const tools = strings(value["tools"] ?? ["read"]);
   if (
@@ -43,8 +38,6 @@ export function readNodeConfig(path: string): NodeConfig {
     roots,
     tools,
     ...(typeof directory === "string" ? { directory } : {}),
-    ...(subscription === "cloud" ? { subscription, subscriptionConfig: path } : {}),
     ...(isRecord(ingest) ? { ingest: typeof baseline === "string" ? { baseline } : {} } : {}),
-    ...(models === true ? { models } : {}),
   };
 }

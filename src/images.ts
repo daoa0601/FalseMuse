@@ -11,7 +11,7 @@ const EXTENSIONS: Record<string, string> = {
 const TYPES = Object.fromEntries(Object.entries(EXTENSIONS).map(([type, ext]) => [ext, type]));
 const IMAGE_BYTES = 10 * 1024 * 1024;
 const MESSAGE_IMAGES = 8;
-/** A model call carries its images inline, under the 32 MiB a relayed WebSocket message may be. */
+/** A model call carries its images inline, so a message's images stay well under its size. */
 const MESSAGE_BYTES = 20 * 1024 * 1024;
 /** Where an image is until a model call loads it. */
 const STORED = "r2:";

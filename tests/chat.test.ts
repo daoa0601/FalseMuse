@@ -24,9 +24,7 @@ test("terminal chat waits for its own reply through a pending backend error", as
         }),
       );
     } else if (request.url === "/api/status") {
-      response.end(
-        JSON.stringify({ authenticated: true, error: "Provider temporarily returned 403" }),
-      );
+      response.end(JSON.stringify({ error: "Provider temporarily returned 403" }));
     } else response.writeHead(404).end("{}");
   });
   const url = await listen(server);

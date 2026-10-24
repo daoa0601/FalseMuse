@@ -1,20 +1,21 @@
 # optchat-memory
 
-An always-on master agent in a Cloudflare Durable Object, with
+A master agent on the laptop with
 [OptChat](https://gist.github.com/VictorTaelin/91837951a5ce5b38f341ec1ba1df6449) memory built from
-every local Codex, Claude Code, Prime, and Pi session. It spawns Pi sessions on connected machines.
-Design, status, and open issues are in [PLAN.md](PLAN.md).
+every local Codex, Claude Code, Prime, and Pi session. It spawns Pi sessions on connected machines
+and coding threads in T3 Code. A Cloudflare Worker keeps an always-on inbox and the backup. Design,
+status, and open issues are in [PLAN.md](PLAN.md).
 
 ## Layout
 
-| Path              | Runs on                  | Contents                                                                 |
-| ----------------- | ------------------------ | ------------------------------------------------------------------------ |
-| `src/`            | Worker (and shared)      | Memory tree, compactor, Master Durable Object, Sandbox, node protocol    |
-| `node/`           | Each machine             | Node daemon, Pi RPC client, Pi extensions, task journal, SQLite adapter  |
-| `scripts/`        | Laptop                   | Owner CLI: chat, login, node registration, prototype, Sandbox image prep |
-| `optchat_memory/` | Laptop (Python)          | History normalizer, secret redaction, live ingest of hand-run sessions   |
-| `tests/`          | Node test runner, Python | Unit tests and Worker tests on the local Cloudflare runtime              |
-| `data/`           | Laptop only, ignored     | Exports, prototype databases, credentials, node state. Never committed.  |
+| Path              | Runs on                  | Contents                                                                |
+| ----------------- | ------------------------ | ----------------------------------------------------------------------- |
+| `src/`            | Master and Worker        | Memory tree, compactor, Master, node protocol, the Worker's inbox       |
+| `node/`           | Each machine             | Local Master host, node daemon, Pi RPC client and extensions, backup    |
+| `scripts/`        | Laptop                   | Owner CLI: chat, node registration, services, prototype                 |
+| `optchat_memory/` | Laptop (Python)          | History normalizer, secret redaction, live ingest of hand-run sessions  |
+| `tests/`          | Node test runner, Python | Unit tests, Master tests on the local host, Worker tests on Miniflare   |
+| `data/`           | Laptop only, ignored     | Exports, prototype databases, credentials, node state. Never committed. |
 
 TypeScript runs directly through Node type stripping (Node 22.22+), so nothing is compiled except
 the Worker bundle.
@@ -31,13 +32,8 @@ pnpm quality:offline
 commit and `quality:offline` before each push. It refuses to replace a different existing hook.
 
 `quality:offline` runs formatting, lint, both strict typechecks (Node and Worker), the secret scan,
-the JavaScript tests, and the Python tests. `pnpm test` builds the Worker and its Sandbox image with
-`cf build` (Docker must be running) and then runs the JavaScript tests. Before the first build,
-stage the Sandbox image context:
-
-```bash
-node scripts/prepare-sandbox.ts
-```
+the JavaScript tests, and the Python tests. `pnpm test` builds the Worker with `cf build` and then
+runs the JavaScript tests.
 
 The Python tests and tools need Python 3.11+ and [Gitleaks](https://github.com/gitleaks/gitleaks).
 
@@ -60,52 +56,51 @@ pnpm prototype 2026-09 gpt-6-luna 4000
 
 This builds the tree for the sessions active in one month in `data/prototype-<month>-<model>/`,
 resuming from its SQLite database. The third argument limits paid nodes. Add `cloud` to start the
-quota guard from the deployed ledger (or `local`), then optionally a label for a separate run
+quota guard from the Master's ledger (or `local`), then optionally a label for a separate run
 directory; compaction pauses at 80% of either quota window. `COMPACTOR_EFFORT` sets the reasoning
 effort (`high` by default). It uses the Codex CLI's current access token, or Pi's subscription
 login, and never rotates either.
 
-## Cloud
+## Master
 
 ```bash
-cf build
-cf deploy --secrets-file data/owner-secrets.json
-node scripts/cloud-login.ts
+node scripts/install-master-service.ts
 ```
 
-If your Cloudflare login reaches more than one account, set `CLOUDFLARE_ACCOUNT_ID` in `.env`.
-`data/owner-secrets.json` holds `OWNER_KEY`, which signs in the web page and authenticates the CLI.
-`cloud-login.ts` starts the Master's own subscription device login; open the printed URL and enter
-the code within 15 minutes.
+The Master runs on this computer at `http://127.0.0.1:8790` under launchd as
+`com.anhdao.optchat-master`, logging to `data/master.log`; `node node/master.ts` runs it in the
+foreground. Its database and files are in `data/master/`. It makes model calls with this computer's
+Codex or Pi login, and runs Code Mode scripts in a child Node process that Node's permission model
+keeps from files, network and other processes. `data/owner-secrets.json` holds `OWNER_KEY`, which
+signs in the web page and authenticates the CLI. An optional `data/master.json` sets `port`,
+`directory`, `masterModel`, `compactorModel`, `compactorEffort`, `timezone` and `backupHour`; turns
+carry the time in `timezone`, so the Master can schedule check-ins.
 
 ```bash
 pnpm chat "Your message"
 ```
 
 The terminal chat queues a turn and waits for its reply; stopping the CLI leaves the turn running.
+The CLI and the ACP agent reach the Master at `url` in `data/cloud.json`.
 
 ```bash
 node scripts/instructions.ts data/instructions.md
 ```
 
 Sets the instructions the Master reads at the start of each turn (who you are, how you want work
-done) from a private file; without a file it prints them, and an empty file clears them. Turns also
-carry the time in `OWNER_TIMEZONE` (`cloudflare.config.ts`), so the Master can schedule check-ins.
+done) from a private file; without a file it prints them, and an empty file clears them.
 
-## Local Master
+## Worker
 
 ```bash
-node node/master.ts
+cf build
+cf deploy --secrets-file data/owner-secrets.json
 ```
 
-Runs the Master on this computer at `http://127.0.0.1:8790`, with its database and files in
-`data/master/` and the same owner key as the cloud. It makes model calls with this computer's Codex
-or Pi login, and runs Code Mode scripts in a child Node process that Node's permission model keeps
-from files, network and other processes. An optional `data/master.json` sets `port`, `directory`,
-`masterModel`, `compactorModel`, `compactorEffort`, `timezone` and `backupHour`.
-
-With `worker` (the Worker's URL) in `data/cloud.json`, the Master also connects out to the Worker,
-through Access with `data/access-token.json`:
+If your Cloudflare login reaches more than one account, set `CLOUDFLARE_ACCOUNT_ID` in `.env`. With
+`worker` (the Worker's URL) in `data/cloud.json`, the Master connects out to the Worker, through
+Access with Cloudflare Access's service token in `data/access-token.json` (`client_id`,
+`client_secret`):
 
 - **Inbox.** The Worker's page takes a message while the laptop is away. The Master takes it as an
   owner turn when it connects, and posts the reply to T3 Code.
@@ -113,20 +108,6 @@ through Access with `data/access-token.json`:
   snapshot of its database to `snapshots/master-<date>.sqlite.gz` in R2, keeping seven, and sends
   every bucket file that changed under its own key. What was sent is recorded in
   `data/master/backup.sqlite`.
-
-To move the cloud Master here, put Cloudflare Access's service token for the Worker in
-`data/access-token.json` (`client_id`, `client_secret`), then:
-
-```bash
-node scripts/move-to-laptop.ts
-node scripts/install-master-service.ts
-```
-
-The move parks the cloud copy (`/api/export/park`: it stops acting and answers only the export) and
-copies its tables, instructions and transcripts into `data/master/`, resuming downloads if run
-again. The service runs the Master under launchd as `com.anhdao.optchat-master`, logging to
-`data/master.log`. Then set `url` to `http://127.0.0.1:8790` in `data/cloud.json`, which the CLI and
-the ACP agent use, and in the node configuration, and restart the node daemon.
 
 ## Nodes
 
@@ -141,18 +122,6 @@ the node its own Pi subscription login. On macOS the daemon runs under launchd a
 `com.anhdao.optchat-memory`, logging to `data/node-daemon.log`; elsewhere run
 `node node/daemon.ts data/<name>-node.json`. Each `bash`, `edit`, or `write` call waits for approval
 in the web chat.
-
-To have the laptop make the Master's model calls with its own Codex or Pi login (chatgpt.com refuses
-bulk calls from Cloudflare), add `"models": true` to its node configuration and allow it once from
-the owner side; the Sandbox cannot be allowed:
-
-```bash
-node -e 'import("./scripts/cloud-client.ts").then(({cloudClient}) => cloudClient().request("/api/nodes/laptop/models", {allowed: true})).then(console.log)'
-```
-
-The Sandbox fallback is started, logged in, and saved from the web chat. Its image contains only the
-staged `.sandbox-build/` context: the daemon, the scanner, and a Git bundle of the committed
-repository.
 
 ## Computers (T3 Code)
 
@@ -187,8 +156,8 @@ thread's report or a schedule, into one OptChat inbox thread in the Scratch proj
 signed-in computer: it renames the inbox `OptChat: <the reply's first line>`, and T3 Code notifies
 phones that allow its notifications when the post finishes. Answer in the inbox like any OptChat
 thread. Deleting the inbox makes the next post start a new one. A reply of only `QUIET` is not
-posted. Images attached to a message are stored in R2 under `images/` and seen with it; the Master's
-`look` tool shows one again later.
+posted. Images attached to a message are stored in the Master's bucket under `images/` and seen with
+it; the Master's `look` tool shows one again later.
 
 ## Helpers
 

@@ -3,7 +3,6 @@ import { hasColumn } from "./database.ts";
 import { Memory, isMessageKind, type NewMessage, type Part } from "./memory.ts";
 import { pump, type PumpResult } from "./compact.ts";
 import {
-  codexCall,
   functionCall,
   isReasoningEffort,
   messageText,
@@ -12,17 +11,9 @@ import {
   type InputItem,
   type ModelRequest,
   type ModelResult,
-  type RelayedRequest,
+  type BackendRequest,
   type ResponseItem,
 } from "./codex.ts";
-import {
-  startDeviceLogin,
-  pollDeviceLogin,
-  pollDelay,
-  refreshLogin,
-  type DeviceLogin,
-  type OAuthCredential,
-} from "./oauth.ts";
 import { QUIET, SYSTEM } from "./prompts.ts";
 import { isImageKey, loadImages, markedImages, saveImages, storedImage } from "./images.ts";
 import { TOOLS, cap } from "./tools.ts";
@@ -34,7 +25,6 @@ import { Recordings } from "./recordings.ts";
 import { Permissions } from "./permissions.ts";
 import { UsageLedger, allowsCompaction } from "./usage.ts";
 import { TranscriptUploads, transcriptKey } from "./uploads.ts";
-import { ModelRelay } from "./relay.ts";
 import { Computers } from "./t3.ts";
 import { Helpers } from "./helpers.ts";
 import { UPLOAD_PART_BYTES, parseNodeMessage } from "./protocol.ts";
@@ -200,12 +190,10 @@ export class Master {
   private readonly schedules: Schedules;
   private readonly usage: UsageLedger;
   private readonly uploads: TranscriptUploads;
-  private readonly relay: ModelRelay;
   private readonly computers: Computers;
   private readonly helpers: Helpers;
   private readonly routes: [string, RegExp, Route][];
   private working: Promise<void> | null = null;
-  private refreshing: Promise<OAuthCredential> | null = null;
   private compacting: Promise<PumpResult> | null = null;
   private callController: AbortController | null = null;
   /** Set while a new turn waits for its view; the compactor holds merges back meanwhile. */
@@ -222,13 +210,6 @@ export class Master {
     this.sql = database;
     this.memory = new Memory(database);
     this.nodes = new Nodes(host.sockets, database, host.bucket);
-    if (host.sandbox && !this.nodes.machine("sandbox")) {
-      this.nodes.register({
-        name: "sandbox",
-        roots: ["/workspace/repo"],
-        tools: ["read", "bash", "edit", "write"],
-      });
-    }
     this.permissions = new Permissions(database, this.nodes);
     this.recordings = new Recordings(database, this.memory);
     database.exec(
@@ -243,7 +224,6 @@ export class Master {
     this.schedules = new Schedules(database);
     this.usage = new UsageLedger(database);
     this.uploads = new TranscriptUploads(database, host.bucket);
-    this.relay = new ModelRelay(host.sockets, (machine) => this.nodes.servesModels(machine));
     this.computers = new Computers(database);
     this.helpers = new Helpers(database, this.computers);
     database.exec(
@@ -292,29 +272,12 @@ export class Master {
     this.nodes.connect(machine, accept);
   }
 
-  private sandbox() {
-    if (!this.host.sandbox) throw new Error("This Master has no cloud Sandbox");
-    return this.host.sandbox;
-  }
-
-  /** Owner routes; the Worker has already authenticated the owner. First match wins. */
+  /** Owner routes; `serve` has already authenticated the owner. First match wins. */
   private ownerRoutes(): [string, RegExp, Route][] {
     const query = (request: Request) => new URL(request.url).searchParams;
     const body = async (request: Request) =>
       requireRecord(await request.json(), "Send a JSON object");
     return [
-      ["GET", /^\/api\/sandbox$/, async () => json(await this.sandbox().status())],
-      [
-        "POST",
-        /^\/api\/sandbox\/start$/,
-        async (request) => json(await this.startSandbox(new URL(request.url).origin)),
-      ],
-      ["POST", /^\/api\/sandbox\/save$/, async () => json(await this.sandbox().save())],
-      [
-        "POST",
-        /^\/api\/sandbox\/auth\/start$/,
-        async () => json(await this.sandbox().startLogin()),
-      ],
       [
         "POST",
         /^\/api\/schedules$/,
@@ -350,12 +313,6 @@ export class Master {
       ],
       [
         "POST",
-        /^\/api\/nodes\/([\w-]+)\/models$/,
-        async (request, match) =>
-          json(this.nodes.allowModels(match[1] ?? "", (await body(request))["allowed"])),
-      ],
-      [
-        "POST",
         /^\/api\/jobs$/,
         async (request) =>
           json(await this.nodes.propose(await request.json(), this.memory.render())),
@@ -382,12 +339,7 @@ export class Master {
       [
         "POST",
         /^\/api\/jobs\/([^/]+)\/approve$/,
-        async (request, match) =>
-          json(
-            await this.nodes.approve(match[1] ?? "", () =>
-              this.startSandbox(new URL(request.url).origin),
-            ),
-          ),
+        async (_request, match) => json(await this.nodes.approve(match[1] ?? "")),
       ],
       [
         "POST",
@@ -434,21 +386,6 @@ export class Master {
           ),
       ],
       ["GET", /^\/api\/view$/, () => json({ text: this.memory.render() })],
-      [
-        "POST",
-        /^\/api\/auth\/start$/,
-        async () => {
-          const device = await startDeviceLogin();
-          await this.host.storage.put("device", device);
-          await this.host.storage.delete("error");
-          await this.wake(5_000);
-          return json({
-            code: device.user_code,
-            url: "https://auth.openai.com/codex/device",
-            expires: device.expires,
-          });
-        },
-      ],
       [
         "POST",
         /^\/api\/import$/,
@@ -539,12 +476,6 @@ export class Master {
   private async nodeRoute(request: Request, path: string): Promise<Response> {
     const machine = this.nodes.authenticate(request);
     if (!machine) return json({ error: "Invalid node key" }, 401);
-    if (path === "/node/subscription" && request.method === "POST") {
-      if (machine.name !== "sandbox") {
-        return json({ error: "This route belongs to the Sandbox's own subscription" }, 403);
-      }
-      return json(await this.sandbox().credential());
-    }
     if (path === "/node/recordings" && request.method === "POST") {
       return json(this.recordings.register(machine.name, await request.json()));
     }
@@ -682,7 +613,6 @@ export class Master {
       settled: this.memory.settled(),
       unsummarized: this.memory.unsummarized(),
       ...this.memory.failures(),
-      authenticated: await this.authenticated(),
       error: (await this.host.storage.get<string>("error")) ?? null,
       pending: this.pendingTurns(),
     };
@@ -777,32 +707,6 @@ export class Master {
     return turn;
   }
 
-  /** Called by the Sandbox before it saves and stops. */
-  sandboxBusy(): boolean {
-    return this.nodes.busy("sandbox");
-  }
-
-  private async startSandbox(url: string) {
-    const sandbox = this.sandbox();
-    const machine = this.nodes.machine("sandbox");
-    if (!machine) throw new Error("The Sandbox machine is not registered");
-    const list = (text: string) => {
-      const value = parseJson(text);
-      return Array.isArray(value)
-        ? value.filter((item): item is string => typeof item === "string")
-        : [];
-    };
-    return sandbox.start({
-      name: "sandbox",
-      key: machine.key,
-      roots: list(machine.roots),
-      tools: list(machine.tools),
-      url,
-      directory: "/workspace/node",
-      subscription: "cloud",
-    });
-  }
-
   async alarm(): Promise<void> {
     this.working ??= this.run()
       .catch(async (error: unknown) => {
@@ -821,35 +725,9 @@ export class Master {
     this.postTurns();
     const next = this.nextCheck();
     if (next !== null) await this.wake(Math.max(100, next - Date.now()));
-    const authenticated = await this.authenticated();
     // The compactor runs beside turns: a turn never waits behind a merge batch or the backlog of
     // an import or another node's log.
-    const compaction = this.startCompaction(authenticated);
-    const device = await this.host.storage.get<DeviceLogin>("device");
-    if (device) {
-      if (device.expires <= Date.now()) {
-        await this.host.storage.delete("device");
-        await this.host.storage.put(
-          "error",
-          "The device code expired. Connect the ChatGPT subscription again.",
-        );
-        return;
-      }
-      const credential = await pollDeviceLogin(device);
-      if (!credential) {
-        await this.wake(pollDelay(device));
-        return;
-      }
-      await this.host.storage.put("oauth", credential);
-      await this.host.storage.delete("device");
-      await this.host.storage.delete("error");
-      await this.wake();
-      return;
-    }
-    if (!authenticated) {
-      await compaction;
-      return;
-    }
+    const compaction = this.startCompaction();
     const [turn] = this.sql.rows<Turn>(
       "SELECT * FROM turns WHERE status='pending' ORDER BY id LIMIT 1",
     );
@@ -891,12 +769,12 @@ export class Master {
   }
 
   /** One compaction round at a time, shared by every caller until it ends. */
-  private startCompaction(authenticated: boolean): Promise<PumpResult> {
+  private startCompaction(): Promise<PumpResult> {
     this.compacting ??= pump(
       this.memory,
       (request) => this.call("compact", this.host.config.compactorModel, request),
       {
-        maxPaidNodes: authenticated ? 64 : 0,
+        maxPaidNodes: 64,
         // A waiting turn may summarize the lines it needs past the quota guard.
         canBuildPaidNode: () => this.waitingTurn || allowsCompaction(this.usage.latestQuota()),
         canMerge: () => !this.waitingTurn,
@@ -921,33 +799,13 @@ export class Master {
         if (!this.compacting) {
           // A round that ended with leaves left was out of budget; failed ones wait for retry.
           if (!this.memory.ready().some((part) => part.level === 0)) return;
-          this.startCompaction(true);
+          this.startCompaction();
         }
         await new Promise((resolve) => setTimeout(resolve, 250));
       }
     } finally {
       this.waitingTurn = false;
     }
-  }
-
-  /** The host's own login counts; otherwise the Master needs its device login. */
-  private async authenticated(): Promise<boolean> {
-    return Boolean(this.host.callModel) || Boolean(await this.host.storage.get("oauth"));
-  }
-
-  private async credentials(): Promise<OAuthCredential> {
-    const credential = await this.host.storage.get<OAuthCredential>("oauth");
-    if (!credential) throw new Error("Connect the ChatGPT subscription before calling a model");
-    if (credential.expires > Date.now() + 300_000) return credential;
-    this.refreshing ??= refreshLogin(credential)
-      .then(async (fresh) => {
-        await this.host.storage.put("oauth", fresh);
-        return fresh;
-      })
-      .finally(() => {
-        this.refreshing = null;
-      });
-    return this.refreshing;
   }
 
   private async call(
@@ -961,7 +819,7 @@ export class Master {
     if (!isReasoningEffort(effort))
       throw new Error("COMPACTOR_EFFORT is low, medium, high or xhigh");
     // Turns and compactions share one cache session: they share the system prompt and tools.
-    const relayed: RelayedRequest = {
+    const prepared: BackendRequest = {
       ...request,
       input: await loadImages(this.host.bucket, request.input),
       model,
@@ -969,19 +827,13 @@ export class Master {
       cacheKey: "optchat",
     };
     const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(180_000)]);
-    // A host with its own login calls the model itself; a relay is for hosts the backend refuses.
-    const node = this.host.callModel ? undefined : this.relay.node();
-    let result: ModelResult;
-    if (this.host.callModel) result = await this.host.callModel({ ...relayed, signal });
-    else if (node) result = await this.relay.call(node.socket, relayed, signal);
-    else result = await codexCall(await this.credentials(), { ...relayed, signal });
+    const result = await this.host.callModel({ ...prepared, signal });
     this.usage.record({
       date: new Date().toISOString(),
       purpose,
       model,
       usage: result.usage,
       quota: result.quota,
-      ...(node ? { source: node.machine } : {}),
     });
     await this.host.storage.delete("error");
     return result;
@@ -1158,7 +1010,6 @@ export class Master {
       }
       case "codemode": {
         const code = requireString(args["code"], "Code mode needs JavaScript source");
-        if (!this.host.runCode) throw new Error("Code Mode is not available on this host");
         return this.host.runCode(code, (tool, toolInput, step) =>
           this.codeStep(callId, step, tool, toolInput),
         );
@@ -1286,8 +1137,6 @@ export class Master {
       const event = parseNodeMessage(typeof raw === "string" ? raw : new TextDecoder().decode(raw));
       switch (event.type) {
         case "node_ready": {
-          const models = event.models === true && this.nodes.servesModels(machine);
-          socket.serializeAttachment({ machine, ...(models ? { models: true } : {}) });
           this.permissions.reconnect(machine, socket);
           send(socket, { type: "ready", jobs: this.nodes.replay(machine, socket) });
           return;
@@ -1324,9 +1173,6 @@ export class Master {
           send(socket, { type: "ack", id: event.id });
           return;
         }
-        case "model_result":
-          this.relay.answer(event);
-          return;
         case "report": {
           await this.nodes.report(machine, event, (text) =>
             this.sql.exec(
@@ -1345,12 +1191,10 @@ export class Master {
   }
 
   webSocketClose(socket: NodeSocket): void {
-    this.relay.drop(socket);
     socket.close();
   }
 
   webSocketError(socket: NodeSocket): void {
-    this.relay.drop(socket);
     socket.close();
   }
 }

@@ -1,15 +1,7 @@
 import { isRecord, parseJson } from "./json.ts";
 import { quotaHeaders, type Quota } from "./usage.ts";
-import { modelResult, relayedRequest, type ModelResult, type RelayedRequest } from "./codex.ts";
 
-/** WebSocket messages between the Master Durable Object and a node daemon. */
-
-/** What `node/container.ts` reports about the daemon inside the Sandbox container. */
-export interface DaemonStatus {
-  state: "missing" | "stopped" | "starting" | "running" | "stopping";
-  pid?: number;
-  jobs?: number | null;
-}
+/** WebSocket messages between the Master and a node daemon. */
 
 /** Parts of an owner transcript upload; R2 multipart parts are at most this size here. */
 export const UPLOAD_PART_BYTES = 10 * 1024 * 1024;
@@ -39,7 +31,6 @@ export type CloudMessage =
   | { type: "permission"; job: string; id: string; allowed: boolean }
   | { type: "permission_pending"; job: string; id: string }
   | { type: "ack"; id: string }
-  | { type: "model_request"; id: string; request: RelayedRequest }
   | { type: "error"; error: string };
 
 export interface PermissionRequest {
@@ -67,18 +58,12 @@ export interface ReportMessage {
   status: ReportStatus;
 }
 
-/** A node's answer to a relayed model call: the backend's result, or why it failed. */
-export type ModelAnswer =
-  | { type: "model_result"; id: string; result: ModelResult }
-  | { type: "model_result"; id: string; error: string };
-
 export type NodeMessage =
-  | { type: "node_ready"; models?: true }
+  | { type: "node_ready" }
   | { type: "resume_job"; id: string; job: string }
   | PermissionRequest
   | { type: "permission_received"; job: string; id: string }
   | ModelCallEvent
-  | ModelAnswer
   | ReportMessage;
 
 const DELIVERY_ID = /^[\w-]{1,80}$/;
@@ -131,12 +116,6 @@ export function parseCloudMessage(raw: string): CloudMessage | null {
       return { type: "permission_pending", job: text(value, "job"), id: text(value, "id") };
     case "ack":
       return { type: "ack", id: text(value, "id") };
-    case "model_request":
-      return {
-        type: "model_request",
-        id: text(value, "id"),
-        request: relayedRequest(value["request"]),
-      };
     case "error":
       return { type: "error", error: text(value, "error") };
     default:
@@ -161,9 +140,7 @@ export function parseNodeMessage(raw: string): NodeMessage {
   if (!isRecord(value)) throw new Error("A node message must be an object");
   switch (value["type"]) {
     case "node_ready":
-      return value["models"] === true
-        ? { type: "node_ready", models: true }
-        : { type: "node_ready" };
+      return { type: "node_ready" };
     case "resume_job":
       return { type: "resume_job", id: deliveryId(value, "id"), job: text(value, "job") };
     case "permission_request": {
@@ -192,12 +169,6 @@ export function parseNodeMessage(raw: string): NodeMessage {
         usage: value["usage"],
         quota: quotaHeaders(value["quota"]),
       };
-    case "model_result": {
-      const id = deliveryId(value, "id");
-      return typeof value["error"] === "string"
-        ? { type: "model_result", id, error: value["error"] }
-        : { type: "model_result", id, result: modelResult(value["result"]) };
-    }
     case "report": {
       const status = value["status"];
       if (!isReportStatus(status)) throw new Error("Invalid Pi report");
